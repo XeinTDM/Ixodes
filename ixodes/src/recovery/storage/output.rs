@@ -32,6 +32,16 @@ pub async fn write_text_artifact(
     write_artifact_bytes(ctx, category, label, file_name, text.as_bytes()).await
 }
 
+pub async fn write_binary_artifact(
+    ctx: &RecoveryContext,
+    category: RecoveryCategory,
+    label: &str,
+    file_name: &str,
+    data: &[u8],
+) -> Result<RecoveryArtifact, RecoveryError> {
+    write_artifact_bytes(ctx, category, label, file_name, data).await
+}
+
 async fn write_artifact_bytes(
     ctx: &RecoveryContext,
     category: RecoveryCategory,

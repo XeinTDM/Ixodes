@@ -10,6 +10,7 @@ pub mod manager;
 pub mod network;
 pub mod other;
 pub mod registry;
+pub mod screenshot;
 pub mod settings;
 pub mod storage;
 pub mod system;

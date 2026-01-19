@@ -12,6 +12,7 @@ tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 directories = "5.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+image = { version = "0.25", default-features = false, features = ["png"] }
 aes-gcm = "0.10"
 base64 = "0.21"
 libloading = "0.7"
@@ -20,7 +21,8 @@ winreg = "0.12"
 walkdir = "2.3.3"
 quick-xml = "0.27"
 roxmltree = "0.18"
-reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", features = ["json", "rustls-tls", "multipart"] }
+zip = { version = "7.1.0", default-features = false, features = ["aes-crypto", "deflate"] }
 rusqlite = { version = "0.33", features = ["bundled"] }
 aes = "0.8.4"
 cfb8 = "0.8"
@@ -44,6 +46,7 @@ version = "0.52"
 features = [
 
     "Win32_Foundation",
+    "Win32_Graphics_Gdi",
 
     "Win32_Storage_FileSystem",
 
@@ -58,5 +61,6 @@ features = [
     "Win32_Security_Cryptography",
 
     "Win32_System_LibraryLoader",
+    "Win32_UI_WindowsAndMessaging",
 
 ]

