@@ -242,7 +242,7 @@ const slugify = (value: string) =>
     <div class="flex justify-end">
       <Dialog>
         <DialogTrigger>
-          <Button variant="link" size="sm">
+          <Button variant="link" size="sm" class="h-auto p-0 text-[10px] uppercase tracking-widest">
             What’s included?
           </Button>
         </DialogTrigger>

