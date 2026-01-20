@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "ixodes-gui",
+        "title": "Ixodes Builder",
         "width": 800,
         "height": 600
       }

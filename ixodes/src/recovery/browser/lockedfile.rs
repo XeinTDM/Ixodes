@@ -1,30 +1,29 @@
 use ntapi::ntexapi::{
-    NtQuerySystemInformation, SystemHandleInformation, SYSTEM_HANDLE_INFORMATION,
-};
-use ntapi::ntobapi::{
-    NtDuplicateObject, NtQueryObject, ObjectTypeInformation, OBJECT_TYPE_INFORMATION,
+    NtQuerySystemInformation, SYSTEM_HANDLE_INFORMATION, SystemHandleInformation,
 };
 use ntapi::ntmmapi::{NtMapViewOfSection, NtUnmapViewOfSection, ViewShare};
+use ntapi::ntobapi::{
+    NtDuplicateObject, NtQueryObject, OBJECT_TYPE_INFORMATION, ObjectTypeInformation,
+};
 use ntapi::winapi::ctypes::c_void;
-use std::mem::{size_of, zeroed};
-use std::path::Path;
 use std::fs::File;
 use std::io::Write;
-use windows::core::{PCWSTR};
+use std::mem::{size_of, zeroed};
+use std::path::Path;
 use windows::Win32::Foundation::{
-    CloseHandle, HANDLE, INVALID_HANDLE_VALUE, MAX_PATH, STATUS_INFO_LENGTH_MISMATCH, STATUS_SUCCESS
+    CloseHandle, HANDLE, INVALID_HANDLE_VALUE, MAX_PATH, STATUS_INFO_LENGTH_MISMATCH,
+    STATUS_SUCCESS,
 };
-use windows::Win32::Storage::FileSystem::{
-    GetLogicalDriveStringsW, QueryDosDeviceW,
-};
+use windows::Win32::Storage::FileSystem::{GetLogicalDriveStringsW, QueryDosDeviceW};
 use windows::Win32::System::Diagnostics::ToolHelp::{
-    CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
+    CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
 };
 use windows::Win32::System::Memory::{PAGE_READONLY, SECTION_MAP_READ};
 use windows::Win32::System::ProcessStatus::GetMappedFileNameW;
 use windows::Win32::System::Threading::{
     GetCurrentProcess, OpenProcess, PROCESS_DUP_HANDLE, PROCESS_QUERY_LIMITED_INFORMATION,
 };
+use windows::core::PCWSTR;
 
 fn u16_ptr_to_string(ptr: *const u16) -> String {
     if ptr.is_null() {
@@ -50,7 +49,8 @@ mod proc {
 
     pub fn find_by_name(name: &str) -> u32 {
         unsafe {
-            let h_snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0).unwrap_or(INVALID_HANDLE_VALUE);
+            let h_snap =
+                CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0).unwrap_or(INVALID_HANDLE_VALUE);
             if h_snap == INVALID_HANDLE_VALUE {
                 return 0;
             }
@@ -104,10 +104,8 @@ mod obj {
                 return String::new();
             }
 
-            let slice = std::slice::from_raw_parts(
-                type_name.Buffer,
-                (type_name.Length / 2) as usize,
-            );
+            let slice =
+                std::slice::from_raw_parts(type_name.Buffer, (type_name.Length / 2) as usize);
             String::from_utf16_lossy(slice)
         }
     }
@@ -139,8 +137,7 @@ mod section {
             }
 
             let mut device_path_buf = [0u16; (MAX_PATH * 2) as usize];
-            let result =
-                GetMappedFileNameW(GetCurrentProcess(), base as _, &mut device_path_buf);
+            let result = GetMappedFileNameW(GetCurrentProcess(), base as _, &mut device_path_buf);
 
             NtUnmapViewOfSection(GetCurrentProcess().0 as _, base);
 
@@ -161,20 +158,28 @@ mod section {
                 while *ptr != 0 {
                     let drive_root = u16_ptr_to_string(ptr);
                     let drive_letter = drive_root.trim_end_matches('\\');
-                    
+
                     let mut dev_name_buf = [0u16; MAX_PATH as usize];
-                    let drive_letter_u16: Vec<u16> = drive_letter.encode_utf16().chain(Some(0)).collect();
-                    
-                    if QueryDosDeviceW(PCWSTR(drive_letter_u16.as_ptr()), Some(&mut dev_name_buf)) > 0 {
+                    let drive_letter_u16: Vec<u16> =
+                        drive_letter.encode_utf16().chain(Some(0)).collect();
+
+                    if QueryDosDeviceW(PCWSTR(drive_letter_u16.as_ptr()), Some(&mut dev_name_buf))
+                        > 0
+                    {
                         let dev_name = u16_arr_to_string(&dev_name_buf);
-                        
-                        if device_path.to_lowercase().starts_with(&dev_name.to_lowercase()) {
+
+                        if device_path
+                            .to_lowercase()
+                            .starts_with(&dev_name.to_lowercase())
+                        {
                             return format!("{}{}", drive_letter, &device_path[dev_name.len()..]);
                         }
                     }
 
                     let mut len = 0;
-                    while *ptr.add(len) != 0 { len += 1; }
+                    while *ptr.add(len) != 0 {
+                        len += 1;
+                    }
                     ptr = ptr.add(len + 1);
                 }
             }
@@ -306,11 +311,12 @@ pub fn copy_locked_file(proc_name: &str, target_file: &Path, dest_path: &Path) -
                 &mut view_size,
                 ViewShare,
                 0,
-                PAGE_READONLY.0
-            ) == STATUS_SUCCESS.0 {
+                PAGE_READONLY.0,
+            ) == STATUS_SUCCESS.0
+            {
                 let success = match File::create(dest_path) {
                     Ok(mut file) => {
-                let data = std::slice::from_raw_parts(base as *const u8, view_size);
+                        let data = std::slice::from_raw_parts(base as *const u8, view_size);
                         file.write_all(data).is_ok()
                     }
                     Err(_) => false,

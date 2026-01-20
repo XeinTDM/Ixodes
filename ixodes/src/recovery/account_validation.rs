@@ -57,6 +57,46 @@ const PLATFORM_CONFIGS: &[PlatformConfig] = &[
         domain: "spotify.com",
         cookie_name: "sp_dc",
     },
+    PlatformConfig {
+        id: "github",
+        domain: "github.com",
+        cookie_name: "user_session",
+    },
+    PlatformConfig {
+        id: "notion",
+        domain: "notion.so",
+        cookie_name: "token_v2",
+    },
+    PlatformConfig {
+        id: "steam",
+        domain: "steamcommunity.com",
+        cookie_name: "steamLoginSecure",
+    },
+    PlatformConfig {
+        id: "dropbox",
+        domain: "dropbox.com",
+        cookie_name: "t",
+    },
+    PlatformConfig {
+        id: "linkedin",
+        domain: "linkedin.com",
+        cookie_name: "li_at",
+    },
+    PlatformConfig {
+        id: "paypal",
+        domain: "paypal.com",
+        cookie_name: "PYPSESSION",
+    },
+    PlatformConfig {
+        id: "amazon",
+        domain: "amazon.com",
+        cookie_name: "session-id",
+    },
+    PlatformConfig {
+        id: "microsoft",
+        domain: "account.microsoft.com",
+        cookie_name: "MSPRequ",
+    },
 ];
 
 pub struct AccountValidationTask {
@@ -189,11 +229,7 @@ async fn validate_token(
                 .header("Cookie", format!("auth_token={token}"))
                 .send()
                 .await?;
-            if response.status().is_success() {
-                Ok(Some(parse_response(response).await?))
-            } else {
-                Ok(None)
-            }
+            parse_validation_response("twitter", response).await
         }
         "tiktok" => {
             let response = client
@@ -201,11 +237,7 @@ async fn validate_token(
                 .header("Cookie", format!("sessionid={token}"))
                 .send()
                 .await?;
-            if response.status().is_success() {
-                Ok(Some(parse_response(response).await?))
-            } else {
-                Ok(None)
-            }
+            parse_validation_response("tiktok", response).await
         }
         "twitch" => {
             let response = client
@@ -215,11 +247,7 @@ async fn validate_token(
                 .body(TWITCH_GRAPHQL.to_string())
                 .send()
                 .await?;
-            if response.status().is_success() {
-                Ok(Some(parse_response(response).await?))
-            } else {
-                Ok(None)
-            }
+            parse_validation_response("twitch", response).await
         }
         "instagram" => {
             let response = client
@@ -227,11 +255,7 @@ async fn validate_token(
                 .header("Cookie", format!("sessionid={token}"))
                 .send()
                 .await?;
-            if response.status().is_success() {
-                Ok(Some(parse_response(response).await?))
-            } else {
-                Ok(None)
-            }
+            parse_validation_response("instagram", response).await
         }
         "reddit" => {
             let response = client
@@ -239,11 +263,7 @@ async fn validate_token(
                 .header("Authorization", format!("Bearer {token}"))
                 .send()
                 .await?;
-            if response.status().is_success() {
-                Ok(Some(parse_response(response).await?))
-            } else {
-                Ok(None)
-            }
+            parse_validation_response("reddit", response).await
         }
         "spotify" => {
             let response = client
@@ -251,11 +271,79 @@ async fn validate_token(
                 .header("Cookie", format!("sp_dc={token}"))
                 .send()
                 .await?;
-            if response.status().is_success() {
-                Ok(Some(parse_response(response).await?))
-            } else {
-                Ok(None)
-            }
+            parse_validation_response("spotify", response).await
+        }
+        "github" => {
+            let response = client
+                .get("https://github.com/settings/profile")
+                .header("Accept", "text/html,application/xhtml+xml")
+                .header("Cookie", format!("logged_in=yes; user_session={token}"))
+                .send()
+                .await?;
+            parse_validation_response("github", response).await
+        }
+        "notion" => {
+            let response = client
+                .post("https://www.notion.so/api/v3/getSpaces")
+                .header("Content-Type", "application/json")
+                .header("Cookie", format!("token_v2={token}"))
+                .body(r#"{"limit":1}"#)
+                .send()
+                .await?;
+            parse_validation_response("notion", response).await
+        }
+        "steam" => {
+            let response = client
+                .get("https://steamcommunity.com/my/profile")
+                .header("Cookie", format!("steamLoginSecure={token}"))
+                .send()
+                .await?;
+            parse_validation_response("steam", response).await
+        }
+        "dropbox" => {
+            let response = client
+                .get("https://www.dropbox.com/account")
+                .header("Cookie", format!("t={token}"))
+                .header("Accept", "text/html,application/xhtml+xml")
+                .send()
+                .await?;
+            parse_validation_response("dropbox", response).await
+        }
+        "linkedin" => {
+            let response = client
+                .get("https://www.linkedin.com/voyager/api/me")
+                .header("Accept", "application/json")
+                .header("Cookie", format!("li_at={token}"))
+                .send()
+                .await?;
+            parse_validation_response("linkedin", response).await
+        }
+        "paypal" => {
+            let response = client
+                .get("https://www.paypal.com/myaccount/summary")
+                .header("Cookie", format!("PYPSESSION={token}"))
+                .header("Accept", "text/html,application/xhtml+xml")
+                .send()
+                .await?;
+            parse_validation_response("paypal", response).await
+        }
+        "amazon" => {
+            let response = client
+                .get("https://www.amazon.com/gp/your-account")
+                .header("Cookie", format!("session-id={token}"))
+                .header("Accept", "text/html,application/xhtml+xml")
+                .send()
+                .await?;
+            parse_validation_response("amazon", response).await
+        }
+        "microsoft" => {
+            let response = client
+                .get("https://account.microsoft.com/profile")
+                .header("Cookie", format!("MSPRequ={token}"))
+                .header("Accept", "text/html,application/xhtml+xml")
+                .send()
+                .await?;
+            parse_validation_response("microsoft", response).await
         }
         _ => Ok(None),
     }
@@ -269,6 +357,67 @@ async fn parse_response(response: reqwest::Response) -> Result<ValidationRespons
         status: status.as_u16(),
         body,
     })
+}
+
+async fn parse_validation_response(
+    platform: &str,
+    response: reqwest::Response,
+) -> Result<Option<ValidationResponse>, reqwest::Error> {
+    if response.status().is_success() {
+        let parsed = parse_response(response).await?;
+        if !is_validation_body_valid(platform, &parsed.body) {
+            debug!(
+                platform = ?platform,
+                status = ?parsed.status,
+                "validation response missing expected fields"
+            );
+            return Ok(None);
+        }
+        Ok(Some(parsed))
+    } else {
+        Ok(None)
+    }
+}
+
+fn is_validation_body_valid(platform: &str, body: &Value) -> bool {
+    match platform {
+        "twitter" => has_json_path(body, &["id"]) || has_json_path(body, &["id_str"]),
+        "tiktok" => {
+            has_json_path(body, &["data", "user_id"])
+                || has_json_path(body, &["data", "user_id_str"])
+        }
+        "twitch" => has_json_path(body, &["data", "user", "id"]),
+        "instagram" => {
+            has_json_path(body, &["user", "pk"]) || has_json_path(body, &["user", "username"])
+        }
+        "reddit" => has_json_path(body, &["id"]) || has_json_path(body, &["name"]),
+        "spotify" => has_json_path(body, &["product"]) || has_json_path(body, &["display_name"]),
+        "github" => html_contains(body, "name=\"user_profile[name]\""),
+        "notion" => has_json_path(body, &["recordMap"]),
+        "steam" => html_contains(body, "class=\"profile_header_top\""),
+        "dropbox" => html_contains(body, "<title>Account | Dropbox</title>"),
+        "linkedin" => has_json_path(body, &["data"]),
+        "paypal" => html_contains(body, "Account Overview | PayPal"),
+        "amazon" => html_contains(body, "Your Account"),
+        "microsoft" => html_contains(body, "My Microsoft account"),
+        _ => true,
+    }
+}
+
+fn has_json_path(mut value: &Value, path: &[&str]) -> bool {
+    for key in path {
+        match value.get(*key) {
+            Some(nested) => value = nested,
+            None => return false,
+        }
+    }
+    !value.is_null()
+}
+
+fn html_contains(body: &Value, substring: &str) -> bool {
+    body.as_str()
+        .map(|text| text.contains(substring))
+        .unwrap_or(false)
 }
 
 async fn write_validation_artifact(

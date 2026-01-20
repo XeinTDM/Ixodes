@@ -302,10 +302,7 @@ impl DiscordSender {
             });
         }
 
-        let form = Form::new().part(
-            "file",
-            Part::bytes(content).file_name(file_name.clone()),
-        );
+        let form = Form::new().part("file", Part::bytes(content).file_name(file_name.clone()));
 
         let response = self
             .client

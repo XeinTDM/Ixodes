@@ -387,14 +387,26 @@ impl RecoveryTask for SystemUpdatesTask {
     }
 
     async fn run(&self, ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
-        let summary = match capture_command_output("wmic", &["qfe", "list", "/format:list"]).await {
-            Ok(output) => QuickFixSummary {
-                updates: parse_quick_fix_output(&output),
+        let summary = match capture_powershell_json(
+            "Get-HotFix | Select-Object Caption,Description,HotFixID,InstalledOn,CSName | ConvertTo-Json -Depth 2",
+        )
+        .await
+        {
+            Ok(value) => QuickFixSummary {
+                updates: parse_quick_fix_json(value),
             },
             Err(err) => {
-                warn!(error = ?err, "wmic qfe query failed");
-                QuickFixSummary {
-                    updates: Vec::new(),
+                warn!(error = ?err, "PowerShell Get-HotFix query failed");
+                match capture_command_output("wmic", &["qfe", "list", "/format:list"]).await {
+                    Ok(output) => QuickFixSummary {
+                        updates: parse_quick_fix_output(&output),
+                    },
+                    Err(err) => {
+                        warn!(error = ?err, "wmic qfe query failed");
+                        QuickFixSummary {
+                            updates: Vec::new(),
+                        }
+                    }
                 }
             }
         };
@@ -423,6 +435,18 @@ struct QuickFixRecord {
     description: Option<String>,
     hotfix_id: Option<String>,
     installed_on: Option<String>,
+    cs_name: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct RawQuickFixRecord {
+    caption: Option<String>,
+    description: Option<String>,
+    #[serde(rename = "HotFixID")]
+    hotfix_id: Option<String>,
+    installed_on: Option<String>,
+    #[serde(rename = "CSName")]
     cs_name: Option<String>,
 }
 
@@ -536,6 +560,38 @@ fn parse_network_stats(value: Value) -> Vec<NetAdapterStat> {
         _ => {}
     }
     adapters
+}
+
+fn parse_quick_fix_json(value: Value) -> Vec<QuickFixRecord> {
+    let mut updates = Vec::new();
+    match value {
+        Value::Array(items) => {
+            for item in items {
+                if let Ok(raw) = serde_json::from_value::<RawQuickFixRecord>(item) {
+                    updates.push(QuickFixRecord {
+                        caption: raw.caption,
+                        description: raw.description,
+                        hotfix_id: raw.hotfix_id,
+                        installed_on: raw.installed_on,
+                        cs_name: raw.cs_name,
+                    });
+                }
+            }
+        }
+        Value::Object(_) => {
+            if let Ok(raw) = serde_json::from_value::<RawQuickFixRecord>(value) {
+                updates.push(QuickFixRecord {
+                    caption: raw.caption,
+                    description: raw.description,
+                    hotfix_id: raw.hotfix_id,
+                    installed_on: raw.installed_on,
+                    cs_name: raw.cs_name,
+                });
+            }
+        }
+        _ => {}
+    }
+    updates
 }
 
 fn parse_quick_fix_output(output: &str) -> Vec<QuickFixRecord> {

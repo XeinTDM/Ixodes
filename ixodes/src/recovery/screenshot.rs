@@ -34,7 +34,9 @@ impl RecoveryTask for ScreenshotTask {
 
         let captures = task::spawn_blocking(capture_all_screens)
             .await
-            .map_err(|err| RecoveryError::Custom(format!("screenshot capture interrupted: {err}")))?;
+            .map_err(|err| {
+                RecoveryError::Custom(format!("screenshot capture interrupted: {err}"))
+            })?;
 
         let mut artifacts = Vec::new();
         for capture in captures {
@@ -144,8 +146,8 @@ fn capture_monitor(index: usize, monitor: &MonitorInfo) -> Result<MonitorCapture
     use windows::Win32::Foundation::{HWND, RECT};
     use windows::Win32::Graphics::Gdi::{
         BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CAPTUREBLT, CreateCompatibleBitmap,
-        CreateCompatibleDC, DeleteDC, DeleteObject, GetDC, GetDIBits, ReleaseDC, SelectObject,
-        DIB_RGB_COLORS, HGDIOBJ, RGBQUAD, SRCCOPY,
+        CreateCompatibleDC, DIB_RGB_COLORS, DeleteDC, DeleteObject, GetDC, GetDIBits, HGDIOBJ,
+        RGBQUAD, ReleaseDC, SRCCOPY, SelectObject,
     };
 
     let RECT {

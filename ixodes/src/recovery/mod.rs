@@ -1,6 +1,7 @@
 pub mod account_validation;
 pub mod behavioral;
 pub mod browser;
+pub mod clipboard;
 pub mod communication;
 pub mod context;
 pub mod gaming;
@@ -16,6 +17,7 @@ pub mod storage;
 pub mod system;
 pub mod task;
 pub mod wallet;
+pub mod webcam;
 
 pub use browser::browsers;
 pub use browser::chromium;

