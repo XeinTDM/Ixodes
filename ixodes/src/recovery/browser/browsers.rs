@@ -234,6 +234,8 @@ const TARGET_EXTENSIONS: &[(&str, &str)] = &[
     ("Phantom", "bfnaelmomeimhlpmgjnjophhpkkoljpa"),
     ("TronLink", "ibnejdfjmmkpcnlpebklmnkoeoihofec"),
     ("Coinbase Wallet", "hnfanknocfeofbddgcijnmhnfnkdnaad"),
+    ("Ronin Wallet", "fnjhmkhhmkbjkkabndcnnogagogbneec"),
+    ("Binance Chain Wallet", "fhbohimaelbohpjbbldcngcnapndodjp"),
 ];
 
 #[async_trait]
