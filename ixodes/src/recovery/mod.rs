@@ -30,8 +30,11 @@ pub use communication::jabber;
 pub use communication::messenger;
 
 pub use network::ftp;
+pub use network::rdp;
 pub use network::services;
+pub use network::vnc;
 pub use network::vpn;
+pub use network::wifi;
 
 pub use storage::file_recovery;
 pub use storage::fs;

