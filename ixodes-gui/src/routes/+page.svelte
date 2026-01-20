@@ -20,7 +20,6 @@
     Hammer,
     KeyRound,
     LockKeyhole,
-    ShieldCheck,
   } from "@lucide/svelte";
 
   type BuildResult = {
@@ -293,11 +292,9 @@
 </script>
 
 <main class="dark min-h-screen bg-background text-foreground flex flex-col gap-6 pt-6 pb-4">
-  
   <CardHeader class="space-y-4 border-b border-border/60">
     <div class="flex items-center justify-between gap-4">
       <div class="flex items-center gap-2 text-sm uppercase tracking-[0.2em] text-muted-foreground">
-        <ShieldCheck class="h-4 w-4 text-primary" />
         Ixodes Builder
       </div>
     </div>
