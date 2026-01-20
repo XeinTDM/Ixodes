@@ -17,8 +17,6 @@
     onDiscordWebhookChange?: (value: string) => void;
   };
 
-  const props = $props();
-
   let {
     commMode = "telegram",
     setCommMode = () => undefined,
@@ -28,7 +26,7 @@
     onTelegramTokenChange = () => undefined,
     onTelegramChatIdChange = () => undefined,
     onDiscordWebhookChange = () => undefined,
-  } = props as Props;
+  }: Props = $props();
 
   const previewImages: Record<CommChannel, { src: string; alt: string }> = {
     telegram: {

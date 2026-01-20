@@ -46,8 +46,6 @@
     onToggleClipboard?: () => void;
   };
 
-  const props = $props();
-
   let {
     categories = [],
     categoryState = {},
@@ -60,7 +58,7 @@
     onToggleScreenshots = () => undefined,
     onToggleWebcams = () => undefined,
     onToggleClipboard = () => undefined,
-  } = props as Props;
+  }: Props = $props();
 
     const featureLinks: Record<string, string> = {
     "Element": "https://element.io",
