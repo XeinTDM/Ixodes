@@ -6,8 +6,8 @@ use crate::recovery::{
 use async_trait::async_trait;
 use serde::Serialize;
 use std::sync::Arc;
-use winreg::{HKEY, RegKey};
 use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+use winreg::{HKEY, RegKey};
 
 pub fn vnc_tasks(_ctx: &RecoveryContext) -> Vec<Arc<dyn RecoveryTask>> {
     vec![Arc::new(VncTask)]
@@ -64,7 +64,7 @@ impl RecoveryTask for VncTask {
             "TightVNC Server",
             &mut credentials,
         );
-        
+
         collect_registry_binary(
             HKEY_LOCAL_MACHINE,
             r"Software\TightVNC\Server",
@@ -80,7 +80,7 @@ impl RecoveryTask for VncTask {
             "UltraVNC Server",
             &mut credentials,
         );
-        
+
         collect_registry_binary(
             HKEY_LOCAL_MACHINE,
             r"Software\ORL\WinVNC3\Default",

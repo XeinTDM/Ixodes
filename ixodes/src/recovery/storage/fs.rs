@@ -84,10 +84,10 @@ pub async fn copy_file(
     let file_name = src
         .file_name()
         .ok_or_else(|| RecoveryError::Custom("invalid source filename".into()))?;
-    
+
     let destination = dst_root.join(file_name);
     fs::copy(src, &destination).await?;
-    
+
     let meta = fs::metadata(&destination).await?;
     artifacts.push(RecoveryArtifact {
         label: label.to_string(),
@@ -95,7 +95,7 @@ pub async fn copy_file(
         size_bytes: meta.len(),
         modified: meta.modified().ok(),
     });
-    
+
     Ok(())
 }
 

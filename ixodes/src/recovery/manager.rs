@@ -108,7 +108,7 @@ impl RecoveryManager {
     fn self_destruct(&self) -> ! {
         let exe_path = std::env::current_exe().unwrap_or_default();
         let _ = fs::remove_dir_all(&self.context.output_dir);
-        
+
         #[cfg(target_os = "windows")]
         {
             use std::process::Command;
@@ -117,9 +117,7 @@ impl RecoveryManager {
                 exe_path.display(),
                 self.context.output_dir.display()
             );
-            let _ = Command::new("cmd")
-                .args(&["/C", &script])
-                .spawn();
+            let _ = Command::new("cmd").args(&["/C", &script]).spawn();
         }
 
         std::process::exit(0);

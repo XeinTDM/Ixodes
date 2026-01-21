@@ -1,9 +1,9 @@
+use crate::recovery::settings::RecoveryControl;
 use crate::recovery::{
     context::RecoveryContext,
     fs::sanitize_label,
     task::{RecoveryArtifact, RecoveryCategory, RecoveryError, RecoveryTask},
 };
-use crate::recovery::settings::RecoveryControl;
 use async_trait::async_trait;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -108,7 +108,7 @@ impl RecoveryTask for FileRecoveryTask {
     async fn run(&self, ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
         let output_root = file_recovery_output_dir(ctx).await?;
         let directories = self.directories.clone();
-        
+
         let control = RecoveryControl::global();
         let mut allowed_extensions: HashSet<String> = ALLOWED_EXTENSIONS
             .iter()

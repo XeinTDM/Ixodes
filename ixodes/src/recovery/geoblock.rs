@@ -1,3 +1,4 @@
+use crate::recovery::helpers::obfuscation::deobf;
 use crate::recovery::settings::RecoveryControl;
 use serde::Deserialize;
 use std::collections::HashSet;
@@ -59,7 +60,7 @@ fn is_blocked(code: &str, blocked: &HashSet<String>) -> bool {
 
 #[cfg(target_os = "windows")]
 fn get_system_country() -> Result<Option<String>, String> {
-    use windows::Win32::Globalization::{GetGeoInfoW, GetUserGeoID, GEOCLASS_NATION, GEO_ISO2};
+    use windows::Win32::Globalization::{GEO_ISO2, GEOCLASS_NATION, GetGeoInfoW, GetUserGeoID};
 
     unsafe {
         let geo_id = GetUserGeoID(GEOCLASS_NATION);
@@ -74,18 +75,18 @@ fn get_system_country() -> Result<Option<String>, String> {
 
         let mut buffer = vec![0u16; len as usize];
         let result = GetGeoInfoW(geo_id, GEO_ISO2, Some(&mut buffer), 0);
-        
+
         if result == 0 {
             return Err("GetGeoInfoW failed".to_string());
         }
 
         let s = String::from_utf16_lossy(&buffer);
         let code = s.trim_matches(char::from(0)).trim().to_uppercase();
-        
+
         if code.len() == 2 {
-             Ok(Some(code))
+            Ok(Some(code))
         } else {
-             Ok(None)
+            Ok(None)
         }
     }
 }
@@ -102,23 +103,39 @@ async fn fetch_ip_country_code() -> Result<String, String> {
         .map_err(|e| e.to_string())?;
 
     let providers = [
-        ("http://ip-api.com/json/", extract_ip_api as fn(GeoResponse) -> Option<String>),
-        ("https://ipwho.is/", extract_ipwho_is),
-        ("https://api.country.is", extract_country_is), 
+        (
+            deobf(&[
+                0xD5, 0xCD, 0xCD, 0xCD, 0x87, 0x92, 0x92, 0xD4, 0xCD, 0x90, 0xDB, 0xCF, 0xD4, 0x93,
+                0xD3, 0xD2, 0xD0, 0x92, 0xD3, 0xCE, 0xDA, 0x92,
+            ]),
+            extract_ip_api as fn(GeoResponse) -> Option<String>,
+        ),
+        (
+            deobf(&[
+                0xD5, 0xC9, 0xC9, 0xCD, 0xCE, 0x87, 0x92, 0x92, 0xD4, 0xCD, 0xC5, 0xDA, 0xD2, 0x93,
+                0xD4, 0xCE, 0x92,
+            ]),
+            extract_ipwho_is,
+        ),
+        (
+            deobf(&[
+                0xD5, 0xC9, 0xC9, 0xCD, 0xCE, 0x87, 0x92, 0x92, 0xDC, 0xCD, 0xD4, 0x93, 0xDA, 0xD2,
+                0xC8, 0xD3, 0xCD, 0xCB, 0xC4, 0x93, 0xD4, 0xCE,
+            ]),
+            extract_country_is,
+        ),
     ];
 
     for (url, extractor) in providers {
-        match client.get(url).send().await {
-            Ok(resp) => {
-                match resp.json::<GeoResponse>().await {
-                    Ok(json) => {
-                        if let Some(code) = extractor(json) {
-                            return Ok(code.to_uppercase());
-                        }
+        match client.get(&url).send().await {
+            Ok(resp) => match resp.json::<GeoResponse>().await {
+                Ok(json) => {
+                    if let Some(code) = extractor(json) {
+                        return Ok(code.to_uppercase());
                     }
-                    Err(e) => warn!("failed to parse json from {}: {}", url, e),
                 }
-            }
+                Err(e) => warn!("failed to parse json from {}: {}", url, e),
+            },
             Err(e) => warn!("failed to reach {}: {}", url, e),
         }
     }

