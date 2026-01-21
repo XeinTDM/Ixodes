@@ -142,7 +142,6 @@ impl RecoveryTask for WireGuardTask {
                     .unwrap_or("unknown");
 
                 if extension == "conf" {
-                    // Plaintext config
                     let dest = output_dir.join(format!("{}.conf", file_name));
                     match fs::copy(&path, &dest).await {
                         Ok(_) => {
@@ -158,7 +157,6 @@ impl RecoveryTask for WireGuardTask {
                         Err(_) => continue,
                     }
                 } else if extension == "dpapi" && path.to_string_lossy().ends_with(".conf.dpapi") {
-                    // Encrypted config
                     if let Ok(encrypted_data) = fs::read(&path).await {
                         if let Some(decrypted) = dpapi_unprotect(&encrypted_data) {
                             let dest = output_dir.join(format!("{}.conf", file_name));
@@ -205,12 +203,10 @@ impl RecoveryTask for ExpressVpnTask {
 
         let output_dir = vpn_output_dir(ctx, &self.label()).await?;
         
-        // Walk specifically looking for DB files or user data
         for entry in WalkDir::new(base).into_iter().filter_map(|e| e.ok()) {
             if entry.file_type().is_file() {
                 let name = entry.file_name().to_string_lossy();
                 if name == "data.db" || name == "database.db" || name.ends_with(".ovpn") {
-                    // Use parent hash to prevent collisions if multiple files have the same name
                     let parent_hash = path_hash(entry.path().parent().unwrap_or(Path::new(".")));
                     let unique_name = format!("{}_{}", parent_hash, name);
                     let dest = output_dir.join(unique_name);

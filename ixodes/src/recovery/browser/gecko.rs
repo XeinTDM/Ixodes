@@ -281,7 +281,6 @@ impl RecoveryTask for GeckoExtensionTask {
 
         for (name, id) in TARGET_EXTENSIONS {
             if let Some(uuid) = uuid_map.get(*id) {
-                // Folder format: moz-extension+++<UUID>
                 let folder_name = format!("moz-extension+++{}", uuid);
                 let extension_dir = storage_dir.join(folder_name);
 
@@ -294,7 +293,6 @@ impl RecoveryTask for GeckoExtensionTask {
                     ));
                     let _ = std::fs::create_dir_all(&dest_root);
 
-                    // Usually the 'idb' folder contains the IndexedDB data
                     match copy_dir_limited(&extension_dir, &dest_root, name, &mut artifacts, usize::MAX, 0).await {
                         Ok(_) => debug!(extension=?name, "recovered gecko extension data"),
                         Err(err) => warn!(extension=?name, error=?err, "failed to recover gecko extension"),
@@ -314,12 +312,10 @@ fn resolve_extension_uuids(profile_path: &Path) -> HashMap<String, String> {
     if let Ok(content) = std::fs::read_to_string(prefs_path) {
         for line in content.lines() {
             let line = line.trim();
-            // Look for: user_pref("extensions.webextensions.uuids", "{\"<ID>\":\"<UUID>\",...}");
             if line.starts_with("user_pref(\"extensions.webextensions.uuids\",") {
                 if let Some(start) = line.find("\"{") {
                     if let Some(end) = line.rfind("}\"") {
-                        let json_str = &line[start + 1..end + 1]; // Grab the JSON string inside the quotes
-                        // Unescape the JSON string if necessary (simple unescape for quotes)
+                        let json_str = &line[start + 1..end + 1];
                         let json_clean = json_str.replace("\\\"", "\"");
                         
                         if let Ok(parsed) = serde_json::from_str::<HashMap<String, String>>(&json_clean) {

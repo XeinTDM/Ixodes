@@ -22,8 +22,8 @@
   import { Switch } from "$lib/components/ui/switch";
 
   type Category = {
-    id: string;
-    label: string;
+    readonly id: string;
+    readonly label: string;
   };
 
   type FeatureDetail = {
@@ -33,7 +33,7 @@
   };
 
   type Props = {
-    categories?: Category[];
+    categories?: readonly Category[];
     categoryState?: Record<string, boolean>;
     selectedCategoryCount?: number;
     toggleCategory?: (id: string, checked: boolean) => void;

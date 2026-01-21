@@ -62,19 +62,16 @@ fn get_system_country() -> Result<Option<String>, String> {
     use windows::Win32::Globalization::{GetGeoInfoW, GetUserGeoID, GEOCLASS_NATION, GEO_ISO2};
 
     unsafe {
-        // Get the GeoID for the user's nation
         let geo_id = GetUserGeoID(GEOCLASS_NATION);
-        if geo_id == 0 { // GEOID_NOT_AVAILABLE
+        if geo_id == 0 {
             return Ok(None);
         }
 
-        // Determine buffer size
         let len = GetGeoInfoW(geo_id, GEO_ISO2, None, 0);
         if len == 0 {
             return Ok(None);
         }
 
-        // Allocate buffer
         let mut buffer = vec![0u16; len as usize];
         let result = GetGeoInfoW(geo_id, GEO_ISO2, Some(&mut buffer), 0);
         
@@ -130,7 +127,6 @@ async fn fetch_ip_country_code() -> Result<String, String> {
 }
 
 fn extract_ip_api(json: GeoResponse) -> Option<String> {
-    // ip-api.com returns "countryCode"
     json.country_code_alt
 }
 

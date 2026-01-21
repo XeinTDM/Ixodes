@@ -3,6 +3,7 @@ use crate::recovery::{
     fs::sanitize_label,
     task::{RecoveryArtifact, RecoveryCategory, RecoveryError, RecoveryTask},
 };
+use crate::recovery::settings::RecoveryControl;
 use async_trait::async_trait;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -104,8 +105,6 @@ impl RecoveryTask for FileRecoveryTask {
         RecoveryCategory::System
     }
 
-use crate::recovery::settings::RecoveryControl;
-
     async fn run(&self, ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
         let output_root = file_recovery_output_dir(ctx).await?;
         let directories = self.directories.clone();
@@ -115,9 +114,7 @@ use crate::recovery::settings::RecoveryControl;
             .iter()
             .map(|ext| ext.to_ascii_lowercase())
             .collect();
-        
-        // Merge custom extensions
-        // Ensure they start with '.' for consistency if user forgot
+
         for ext in control.custom_extensions() {
             let normalized = if ext.starts_with('.') {
                 ext.to_ascii_lowercase()
@@ -128,7 +125,6 @@ use crate::recovery::settings::RecoveryControl;
         }
 
         let mut keywords: Vec<String> = KEYWORDS.iter().map(|kw| kw.to_ascii_lowercase()).collect();
-        // Merge custom keywords
         for kw in control.custom_keywords() {
             keywords.push(kw.to_ascii_lowercase());
         }

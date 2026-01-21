@@ -45,7 +45,7 @@ fn pump_file_impl(target_size: u64) -> Result<(), Box<dyn std::error::Error>> {
                 rng.fill(&mut buffer[..]);
             }
             1 => {
-                let pattern = [0x41, 0x42, 0x43, 0x44, 0x00]; // ABCD.
+                let pattern = [0x41, 0x42, 0x43, 0x44, 0x00];
                 for i in 0..to_write {
                     buffer[i] = pattern[i % pattern.len()];
                 }

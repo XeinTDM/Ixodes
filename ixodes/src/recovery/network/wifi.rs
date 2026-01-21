@@ -88,8 +88,6 @@ async fn get_wifi_password(ssid: &str) -> Option<String> {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     for line in stdout.lines() {
-        // "Key Content" is the label in English
-        // We look for common labels across different locales or just the line containing the key
         if line.contains("Key Content") || line.contains("Contenu de la clé") || line.contains("Schlüsselinhalt") {
             if let Some(pos) = line.find(':') {
                 return Some(line[pos + 1..].trim().to_string());

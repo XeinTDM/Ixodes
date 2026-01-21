@@ -19,10 +19,12 @@
   import GeoBlockSection from "./components/GeoBlockSection.svelte";
   import PumperSection from "./components/PumperSection.svelte";
   import FileGrabberSection from "./components/FileGrabberSection.svelte";
+  import PasswordGeneratorDialog from "./components/PasswordGeneratorDialog.svelte";
   import {
     Hammer,
     KeyRound,
     LockKeyhole,
+    WandSparkles,
   } from "@lucide/svelte";
 
   type BuildResult = {
@@ -100,7 +102,10 @@
   let pumpUnit = $state<"kb" | "mb" | "gb">("mb");
   let customExtensions = $state<string[]>([]);
   let customKeywords = $state<string[]>([]);
-
+  let pwdLength = $state(20);
+  let pwdUppercase = $state(true);
+  let pwdNumbers = $state(true);
+  let pwdSymbols = $state(true);
   let buildStatus = $state<"idle" | "loading" | "success" | "error">("idle");
   let buildError = $state("");
   let movedTo = $state("");
@@ -209,6 +214,31 @@
     customKeywords = customKeywords.filter(k => k !== kw);
   };
 
+  const generatePassword = () => {
+    const lower = "abcdefghijklmnopqrstuvwxyz";
+    const upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    const nums = "0123456789";
+    const syms = "!@#$%^&*()_+-=[]{}|;:,.<>?";
+
+    let charset = lower;
+    if (pwdUppercase) charset += upper;
+    if (pwdNumbers) charset += nums;
+    if (pwdSymbols) charset += syms;
+
+    let result = "";
+    const array = new Uint32Array(pwdLength);
+    crypto.getRandomValues(array);
+    for (let i = 0; i < pwdLength; i++) {
+        result += charset[array[i] % charset.length];
+    }
+    archivePassword = result;
+  };
+
+  const setPwdLength = (val: number) => pwdLength = val;
+  const togglePwdUppercase = () => pwdUppercase = !pwdUppercase;
+  const togglePwdNumbers = () => pwdNumbers = !pwdNumbers;
+  const togglePwdSymbols = () => pwdSymbols = !pwdSymbols;
+
   const setCommunicationMode = (mode: "telegram" | "discord") => {
     commMode = mode;
   };
@@ -277,7 +307,6 @@
       return;
     }
     
-    // Calculate size in MB for backend
     let pumpSizeMb = 0;
     if (pumpSize > 0) {
         if (pumpUnit === "kb") pumpSizeMb = Math.ceil(pumpSize / 1024);
@@ -397,11 +426,27 @@
         <LockKeyhole class="h-4 w-4 text-primary" />
         Archive Password
       </div>
-      <Input
-        id="archive-password"
-        placeholder="Archive password (optional)"
-        bind:value={archivePassword}
-      />
+      <div class="flex gap-2">
+        <Input
+            id="archive-password"
+            placeholder="Archive password (optional)"
+            bind:value={archivePassword}
+        />
+        <PasswordGeneratorDialog 
+            length={pwdLength}
+            useUppercase={pwdUppercase}
+            useNumbers={pwdNumbers}
+            useSymbols={pwdSymbols}
+            onLengthChange={setPwdLength}
+            onToggleUppercase={togglePwdUppercase}
+            onToggleNumbers={togglePwdNumbers}
+            onToggleSymbols={togglePwdSymbols}
+        />
+        <Button variant="outline" onclick={generatePassword}>
+            <WandSparkles class="mr-2 h-4 w-4" />
+            Generate
+        </Button>
+      </div>
     </div>
 
     <FileGrabberSection

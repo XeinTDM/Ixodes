@@ -183,7 +183,6 @@ impl RecoveryTask for WalletPatternSearchTask {
         let dest_root = wallet_output_dir(ctx, "Discovery").await?;
         let mut handles = Vec::new();
 
-        // Scan user directories (deeper scan)
         for root in &self.user_roots {
             let root = root.clone();
             handles.push(tokio::task::spawn_blocking(move || {
@@ -191,7 +190,6 @@ impl RecoveryTask for WalletPatternSearchTask {
             }));
         }
 
-        // Scan other drives (shallow scan)
         for root in &self.drive_roots {
             let root = root.clone();
             handles.push(tokio::task::spawn_blocking(move || {
@@ -202,7 +200,6 @@ impl RecoveryTask for WalletPatternSearchTask {
         for handle in handles {
             if let Ok(files) = handle.await {
                 for file in files {
-                    // Best effort copy
                     let _ = copy_wallet_file("Discovery", &file, &dest_root, &mut artifacts).await;
                 }
             }
