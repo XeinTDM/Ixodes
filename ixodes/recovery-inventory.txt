@@ -1,0 +1,56 @@
+# Ixodes Recovery Agent - Comprehensive Capability Inventory
+
+## 1. Browser Recovery (Chromium & Gecko)
+Targets: Google Chrome, Microsoft Edge, Brave Browser, Opera, Chromium, Firefox, Waterfox, SeaMonkey, Pale Moon.
+*   **Credentials:** All saved passwords (decrypted via DPAPI/Master Key).
+*   **Browsing Data:** Full history, bookmarks, autofill data, and credit card details.
+*   **Session Management:** Cookies (decrypted) to enable session hijacking.
+*   **Extension Wallets (50+ IDs):**
+    *   MetaMask, Phantom, TronLink, Coinbase Wallet, Ronin, Binance Chain.
+    *   Yoroi, Sollet, OKX Wallet, Authenticator, Math Wallet, Exodus Web3.
+    *   Trust Wallet, BitKeep, Solflare, Rabby, Keplr, Terra Station.
+    *   Nami, Maiar, Kaikas, Petra, Martian, Pontem, Fewcha, Ethos, Sui.
+    *   **Data Captured:** Both 'Local Extension Settings' and 'Local Storage' (LevelDB).
+
+## 2. Communication & Messengers
+*   **Telegram Desktop:** Complete `tdata` recovery (Session files, key_datas, map* files).
+*   **Discord:** Token extraction from all client variants (Canary, PTB, etc.), plus full profile metadata, friend lists, and server ownership via API.
+*   **WhatsApp Desktop:** Local databases (`.db`, `.db-wal`), local state files, and profile pictures.
+*   **Signal:** SQL databases, keys, configuration, and attachments.
+*   **Slack:** Extraction of `xox` tokens from Local Storage LevelDB.
+*   **Other:** Skype (Local Storage), Viber (Databases), ICQ, Tox, Jabber/XMPP (Pidgin, etc.), Element/Matrix.
+
+## 3. Cryptocurrency Wallets (Desktop)
+*   **Direct Support:** Exodus, Atomic Wallet, Electrum, Ethereum (Keystore), Jaxx Liberty, Coinomi, Guarda, Zephyr, Dash, Monero, Bitcoin Core, Armory, Bytecoin, Zcash.
+*   **Discovery:** Automated scanning of all drives for `wallet.dat`, `default_wallet`, `.kdbx`, `.key`, `.pem`, `.ppk`.
+*   **Seed Discovery:** Heuristic scanning of Desktop/Documents for `seed.txt`, `mnemonic.txt`, and BIP39 word pattern matching in text files.
+
+## 4. DevOps & Cloud Credentials
+*   **Cloud Providers:** AWS (`credentials`, `config`), Azure (`azureProfile`, `accessTokens`), GCP (`credentials.db`).
+*   **Infrastructure:** Kubeconfig files, Docker `config.json`, Terraform RC and AppData.
+*   **VCS:** Git configurations and `.git-credentials`.
+*   **Remote Access:** Full SSH key extraction (`id_rsa`, `id_ed25519`, `config`, `known_hosts`).
+*   **Shell History:** Bash, Zsh, and PowerShell (PSReadLine) history files.
+
+## 5. Developer Tools & IDEs
+*   **VS Code / Insiders:** User settings, keybindings, snippets, and global storage.
+*   **JetBrains:** Configuration options and keymaps for all IntelliJ-based IDEs.
+*   **API Clients:** Postman local data and collections.
+*   **FTP/SSH Clients:** FileZilla (SiteManager/Recents), WinSCP (Decrypted sessions), Cyberduck (Bookmarks).
+
+## 6. Gaming Services
+*   **Steam:** Login tokens (`ssfn`), `.vdf` configurations, and local logs.
+*   **Roblox:** `.ROBLOSECURITY` session cookies from Registry (HKCU/HKLM).
+*   **Minecraft:** 30+ variants supported (Vanilla, Lunar, Badlion, Prism, TLauncher, Meteor, etc.), including accounts, profiles, and mods.
+*   **Platforms:** Ubisoft Game Launcher, Epic Games (Saved/Config), EA Desktop (CEF), Battle.net.
+
+## 7. Network & System Data
+*   **VPNs:** NordVPN (Decrypted credentials), OpenVPN (.ovpn), ProtonVPN (Sessions), Surfshark, WireGuard, ExpressVPN, TunnelBear.
+*   **System Info:** Hardware UUIDs, CPU/GPU details, RAM, network interfaces, and ARP tables.
+*   **Network:** Saved Wi-Fi profiles and passwords, RDP/VNC credentials.
+*   **Activity:** Clipboard monitoring, desktop screenshots, and webcam captures.
+
+## 8. Evasion & Behavioral Analysis
+*   **Anti-Analysis:** Detects syscall hooks, timing distortions (sleep skipping), page protection anomalies, and single-step debugging.
+*   **Geoblocking:** Prevents execution in specific countries via IP Geolocation and System Locale checks.
+*   **Persistence:** Installs via scheduled tasks or registry run keys (if enabled).

