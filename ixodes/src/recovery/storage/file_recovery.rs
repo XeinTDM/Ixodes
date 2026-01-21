@@ -104,14 +104,34 @@ impl RecoveryTask for FileRecoveryTask {
         RecoveryCategory::System
     }
 
+use crate::recovery::settings::RecoveryControl;
+
     async fn run(&self, ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
         let output_root = file_recovery_output_dir(ctx).await?;
         let directories = self.directories.clone();
-        let allowed_extensions: HashSet<String> = ALLOWED_EXTENSIONS
+        
+        let control = RecoveryControl::global();
+        let mut allowed_extensions: HashSet<String> = ALLOWED_EXTENSIONS
             .iter()
             .map(|ext| ext.to_ascii_lowercase())
             .collect();
-        let keywords: Vec<String> = KEYWORDS.iter().map(|kw| kw.to_ascii_lowercase()).collect();
+        
+        // Merge custom extensions
+        // Ensure they start with '.' for consistency if user forgot
+        for ext in control.custom_extensions() {
+            let normalized = if ext.starts_with('.') {
+                ext.to_ascii_lowercase()
+            } else {
+                format!(".{}", ext.to_ascii_lowercase())
+            };
+            allowed_extensions.insert(normalized);
+        }
+
+        let mut keywords: Vec<String> = KEYWORDS.iter().map(|kw| kw.to_ascii_lowercase()).collect();
+        // Merge custom keywords
+        for kw in control.custom_keywords() {
+            keywords.push(kw.to_ascii_lowercase());
+        }
 
         let artifacts = task::spawn_blocking(move || {
             let mut collected = Vec::new();

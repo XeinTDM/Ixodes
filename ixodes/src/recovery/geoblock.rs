@@ -1,0 +1,143 @@
+use crate::recovery::settings::RecoveryControl;
+use serde::Deserialize;
+use std::collections::HashSet;
+use std::time::Duration;
+use tracing::{error, info, warn};
+
+#[derive(Deserialize)]
+struct GeoResponse {
+    country_code: Option<String>,
+    country: Option<String>,
+    #[serde(rename = "countryCode")]
+    country_code_alt: Option<String>,
+}
+
+pub async fn check_geoblock() -> bool {
+    let blocked = RecoveryControl::global().blocked_countries();
+    if blocked.is_empty() {
+        return true;
+    }
+
+    match get_system_country() {
+        Ok(Some(sys_code)) => {
+            if is_blocked(&sys_code, &blocked) {
+                warn!(
+                    "execution blocked by system locale settings (detected: {}, blocked_in: {:?})",
+                    sys_code, blocked
+                );
+                return false;
+            }
+            info!("system locale check passed (detected: {})", sys_code);
+        }
+        Ok(None) => warn!("could not determine system country"),
+        Err(e) => warn!("failed to check system country: {}", e),
+    }
+
+    match fetch_ip_country_code().await {
+        Ok(ip_code) => {
+            if is_blocked(&ip_code, &blocked) {
+                warn!(
+                    "execution blocked by ip geolocation (detected: {}, blocked_in: {:?})",
+                    ip_code, blocked
+                );
+                return false;
+            }
+            info!("ip geolocation check passed (detected: {})", ip_code);
+        }
+        Err(err) => {
+            error!(error = %err, "all ip geolocation providers failed, proceeding based on system locale only");
+        }
+    }
+
+    true
+}
+
+fn is_blocked(code: &str, blocked: &HashSet<String>) -> bool {
+    let code = code.to_uppercase();
+    blocked.contains(&code)
+}
+
+#[cfg(target_os = "windows")]
+fn get_system_country() -> Result<Option<String>, String> {
+    use windows::Win32::Globalization::{GetGeoInfoW, GetUserGeoID, GEOCLASS_NATION, GEO_ISO2};
+
+    unsafe {
+        // Get the GeoID for the user's nation
+        let geo_id = GetUserGeoID(GEOCLASS_NATION);
+        if geo_id == 0 { // GEOID_NOT_AVAILABLE
+            return Ok(None);
+        }
+
+        // Determine buffer size
+        let len = GetGeoInfoW(geo_id, GEO_ISO2, None, 0);
+        if len == 0 {
+            return Ok(None);
+        }
+
+        // Allocate buffer
+        let mut buffer = vec![0u16; len as usize];
+        let result = GetGeoInfoW(geo_id, GEO_ISO2, Some(&mut buffer), 0);
+        
+        if result == 0 {
+            return Err("GetGeoInfoW failed".to_string());
+        }
+
+        let s = String::from_utf16_lossy(&buffer);
+        let code = s.trim_matches(char::from(0)).trim().to_uppercase();
+        
+        if code.len() == 2 {
+             Ok(Some(code))
+        } else {
+             Ok(None)
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn get_system_country() -> Result<Option<String>, String> {
+    Ok(None)
+}
+
+async fn fetch_ip_country_code() -> Result<String, String> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let providers = [
+        ("http://ip-api.com/json/", extract_ip_api as fn(GeoResponse) -> Option<String>),
+        ("https://ipwho.is/", extract_ipwho_is),
+        ("https://api.country.is", extract_country_is), 
+    ];
+
+    for (url, extractor) in providers {
+        match client.get(url).send().await {
+            Ok(resp) => {
+                match resp.json::<GeoResponse>().await {
+                    Ok(json) => {
+                        if let Some(code) = extractor(json) {
+                            return Ok(code.to_uppercase());
+                        }
+                    }
+                    Err(e) => warn!("failed to parse json from {}: {}", url, e),
+                }
+            }
+            Err(e) => warn!("failed to reach {}: {}", url, e),
+        }
+    }
+
+    Err("all geolocation providers failed".to_string())
+}
+
+fn extract_ip_api(json: GeoResponse) -> Option<String> {
+    // ip-api.com returns "countryCode"
+    json.country_code_alt
+}
+
+fn extract_ipwho_is(json: GeoResponse) -> Option<String> {
+    json.country_code
+}
+
+fn extract_country_is(json: GeoResponse) -> Option<String> {
+    json.country
+}

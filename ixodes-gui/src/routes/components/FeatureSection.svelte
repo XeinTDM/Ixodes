@@ -41,9 +41,11 @@
     captureScreenshots?: boolean;
     captureWebcams?: boolean;
     captureClipboard?: boolean;
+    persistence?: boolean;
     onToggleScreenshots?: () => void;
     onToggleWebcams?: () => void;
     onToggleClipboard?: () => void;
+    onTogglePersistence?: () => void;
   };
 
   let {
@@ -55,9 +57,11 @@
     captureScreenshots = false,
     captureWebcams = false,
     captureClipboard = false,
+    persistence = false,
     onToggleScreenshots = () => undefined,
     onToggleWebcams = () => undefined,
     onToggleClipboard = () => undefined,
+    onTogglePersistence = () => undefined,
   }: Props = $props();
 
     const featureLinks: Record<string, string> = {
@@ -221,6 +225,10 @@ const slugify = (value: string) =>
     {
       title: "Clipboard",
       summary: "Logs plaintext/Unicode text and bitmap image data currently stored in the Windows clipboard.",
+    },
+    {
+      title: "Persistence",
+      summary: "Copies the agent to a hidden system directory and registers a startup key to ensure it runs on every reboot.",
     },
   ];
 
@@ -399,6 +407,27 @@ const slugify = (value: string) =>
         <Label class="text-sm">Clipboard</Label>
       </div>
       <Switch data-feature-switch class="cursor-pointer" checked={captureClipboard} />
+    </div>
+    <div
+      class="flex items-center justify-between gap-3 rounded-md border border-border/70 bg-muted/30 px-3 py-2 text-sm cursor-pointer"
+      role="button"
+      tabindex="0"
+      onclick={(event) => {
+        const target = event.target as HTMLElement | null;
+        if (target?.closest?.("[data-feature-switch]")) return;
+        onTogglePersistence();
+      }}
+      onkeydown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onTogglePersistence();
+        }
+      }}
+    >
+      <div class="space-y-0.5">
+        <Label class="text-sm">Persistence</Label>
+      </div>
+      <Switch data-feature-switch class="cursor-pointer" checked={persistence} />
     </div>
   </div>
 </div>

