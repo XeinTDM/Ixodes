@@ -33,6 +33,7 @@ impl RecoveryManager {
         self.tasks.extend(tasks);
     }
 
+    #[allow(dead_code)]
     pub async fn with_default_browser_tasks(
         context: &RecoveryContext,
     ) -> Result<Self, RecoveryError> {

@@ -1830,6 +1830,7 @@ version = "0.1.0"
 dependencies = [
  "ico 0.3.0",
  "image",
+ "rand 0.8.5",
  "reqwest",
  "serde",
  "serde_json",

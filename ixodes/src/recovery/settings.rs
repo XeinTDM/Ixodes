@@ -29,6 +29,7 @@ pub struct RecoveryControl {
         telegram_chat_id: Option<String>,
         discord_webhook: Option<String>,
             persistence_enabled: bool,
+            #[allow(dead_code)]
             pump_size_mb: u32,
             blocked_countries: Option<HashSet<String>>,
             custom_extensions: Option<HashSet<String>>,
@@ -58,6 +59,7 @@ pub struct RecoveryControl {
                 self.custom_keywords.clone().unwrap_or_default()
             }
         
+            #[allow(dead_code)]
             pub fn pump_size_mb(&self) -> u32 {            self.pump_size_mb
         }
     

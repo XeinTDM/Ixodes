@@ -121,21 +121,6 @@ async fn register_all_tasks(
 }
 
 async fn send_outcomes(outcomes: &[RecoveryOutcome]) -> Result<(), Box<dyn std::error::Error>> {
-
-    tracing::info!(
-        "recovery session complete: {} tasks | summary logged at {}",
-        outcomes.len(),
-        manager.context().output_dir.join("summary.log").display()
-    );
-
-    if let Err(err) = send_outcomes(&outcomes).await {
-        tracing::error!(error = %err, "failed to send recovery artifacts");
-    }
-
-    Ok(())
-}
-
-async fn send_outcomes(outcomes: &[RecoveryOutcome]) -> Result<(), Box<dyn std::error::Error>> {
     use formatter::MessageFormatter;
     use recovery::settings::RecoveryControl;
     use sender::{ChatId, DiscordSender, Sender, TelegramSender};

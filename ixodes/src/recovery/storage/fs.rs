@@ -1,5 +1,5 @@
 use crate::recovery::task::{RecoveryArtifact, RecoveryError};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use tokio::fs;
 use tracing::warn;
 
