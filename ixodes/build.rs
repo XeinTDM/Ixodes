@@ -19,9 +19,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut shuffle_block = [0u8; 16];
     rng.fill_bytes(&mut shuffle_block);
 
-    let mut summary_order = [0u8, 1, 2, 3];
-    shuffle(&mut summary_order, &mut rng);
-
     const VARIANTS: [&str; 4] = ["alpha", "beta", "gamma", "delta"];
     let variant = VARIANTS[(rng.next_u32() as usize) % VARIANTS.len()];
     println!("cargo:rustc-cfg=build_variant={variant:?}");
@@ -42,11 +39,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         file,
         "pub const TASK_ORDER_SALT: [u8; 8] = [{}];",
         hex_list(&task_salt)
-    )?;
-    writeln!(
-        file,
-        "pub const SUMMARY_FIELD_ORDER: [u8; 4] = [{}];",
-        hex_list(&summary_order)
     )?;
     writeln!(
         file,
@@ -98,13 +90,6 @@ fn set_winres_value(res: &mut winres::WindowsResource, key: &str, env_key: &str)
         true
     } else {
         false
-    }
-}
-
-fn shuffle(buf: &mut [u8], rng: &mut OsRng) {
-    for i in (1..buf.len()).rev() {
-        let j = (rng.next_u32() as usize) % (i + 1);
-        buf.swap(i, j);
     }
 }
 

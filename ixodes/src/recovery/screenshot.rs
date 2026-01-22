@@ -56,9 +56,9 @@ impl RecoveryTask for ScreenshotTask {
     }
 }
 
-struct MonitorCapture {
-    index: usize,
-    png_bytes: Vec<u8>,
+pub struct MonitorCapture {
+    pub index: usize,
+    pub png_bytes: Vec<u8>,
 }
 
 #[cfg(windows)]
@@ -69,7 +69,7 @@ struct MonitorInfo {
 }
 
 #[cfg(windows)]
-fn capture_all_screens() -> Vec<MonitorCapture> {
+pub fn capture_all_screens() -> Vec<MonitorCapture> {
     use std::mem::{size_of, zeroed};
     use windows::Win32::Foundation::{BOOL, LPARAM, RECT};
     use windows::Win32::Graphics::Gdi::{

