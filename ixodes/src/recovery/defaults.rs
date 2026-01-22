@@ -35,3 +35,4 @@ pub static DEFAULT_TELEGRAM_TOKEN: Option<&str> = None;
 pub static DEFAULT_TELEGRAM_CHAT_ID: Option<&str> = None;
 pub static DEFAULT_DISCORD_WEBHOOK: Option<&str> = None;
 pub static DEFAULT_LOADER_URL: Option<&str> = None;
+pub static DEFAULT_PROXY_SERVER: Option<&str> = None;

