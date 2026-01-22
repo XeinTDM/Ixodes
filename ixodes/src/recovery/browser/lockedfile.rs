@@ -44,7 +44,7 @@ fn u16_arr_to_string(arr: &[u16]) -> String {
     String::from_utf16_lossy(&arr[..len])
 }
 
-mod proc {
+pub mod proc {
     use super::*;
 
     pub fn find_by_name(name: &str) -> u32 {

