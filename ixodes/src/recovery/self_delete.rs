@@ -5,9 +5,9 @@ use std::mem::size_of;
 use tracing::{debug, error, info};
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::Storage::FileSystem::{
-    CreateFileW, FileDispositionInfo, FileRenameInfo, SetFileInformationByHandle, DELETE,
-    FILE_ATTRIBUTE_NORMAL, FILE_DISPOSITION_INFO, FILE_RENAME_INFO,
-    FILE_SHARE_DELETE, FILE_SHARE_READ, OPEN_EXISTING,
+    CreateFileW, DELETE, FILE_ATTRIBUTE_NORMAL, FILE_DISPOSITION_INFO, FILE_RENAME_INFO,
+    FILE_SHARE_DELETE, FILE_SHARE_READ, FileDispositionInfo, FileRenameInfo, OPEN_EXISTING,
+    SetFileInformationByHandle,
 };
 use windows::core::PCWSTR;
 
@@ -58,8 +58,6 @@ pub unsafe fn perform_silent_delete() -> Result<(), String> {
         return Err("invalid file handle".to_string());
     }
 
-    // Step 1: Rename to alternate data stream (ADS) to clear image lock
-    // ":wtf"
     let stream_name = ":wtf\0".encode_utf16().collect::<Vec<u16>>();
     let rename_info_size = size_of::<FILE_RENAME_INFO>() + (stream_name.len() * 2);
     let mut buffer = vec![0u8; rename_info_size];
@@ -67,7 +65,7 @@ pub unsafe fn perform_silent_delete() -> Result<(), String> {
 
     rename_info.Anonymous.ReplaceIfExists = true.into();
     rename_info.RootDirectory = HANDLE::default();
-    rename_info.FileNameLength = ((stream_name.len() - 1) * 2) as u32; // -1 for null terminator in length count
+    rename_info.FileNameLength = ((stream_name.len() - 1) * 2) as u32;
 
     unsafe {
         std::ptr::copy_nonoverlapping(
@@ -91,7 +89,6 @@ pub unsafe fn perform_silent_delete() -> Result<(), String> {
         return Err("failed to rename to ADS".to_string());
     }
 
-    // Step 2: Set DeleteDisposition
     let delete_info = FILE_DISPOSITION_INFO {
         DeleteFile: true.into(),
     };

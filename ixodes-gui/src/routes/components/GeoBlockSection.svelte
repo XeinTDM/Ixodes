@@ -34,7 +34,6 @@
 
   let open = $state(false);
 
-  // Full ISO list.
   const countries: Country[] = [
     { value: "AF", label: "Afghanistan" },
     { value: "AX", label: "Aland Islands" },

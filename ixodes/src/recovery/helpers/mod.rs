@@ -3,6 +3,7 @@ pub mod hardware;
 pub mod hw_breakpoints;
 pub mod network;
 pub mod obfuscation;
+pub mod payload;
 pub mod pe;
 pub mod sleep;
 pub mod syscalls;

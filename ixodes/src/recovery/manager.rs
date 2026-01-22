@@ -69,7 +69,7 @@ impl RecoveryManager {
                 })?;
             let task = Arc::clone(&task);
             let ctx = self.context.clone();
-            
+
             if build_config::BUILD_VARIANT != build_config::BuildVariant::Alpha {
                 use crate::recovery::helpers::sleep::stealth_sleep;
                 use rand::Rng;

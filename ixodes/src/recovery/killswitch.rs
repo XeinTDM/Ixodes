@@ -1,7 +1,7 @@
 use crate::recovery::helpers::obfuscation::deobf;
 use std::path::Path;
+use windows::Win32::System::Threading::{MUTEX_ALL_ACCESS, OpenMutexW};
 use windows::core::PCWSTR;
-use windows::Win32::System::Threading::{OpenMutexW, MUTEX_ALL_ACCESS};
 
 pub async fn check_killswitch() -> bool {
     if check_mutexes() {

