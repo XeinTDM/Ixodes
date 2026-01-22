@@ -8,7 +8,6 @@ use windows::Win32::System::Memory::{
 use windows::core::PCWSTR;
 
 use crate::recovery::helpers::syscalls::{SyscallManager, indirect_syscall_5};
-
 use crate::recovery::helpers::hw_breakpoints::enable_hw_breakpoint;
 
 pub fn apply_evasion_techniques() {
@@ -146,3 +145,4 @@ fn apply_patch(
         Ok(())
     }
 }
+

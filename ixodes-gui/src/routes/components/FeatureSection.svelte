@@ -38,12 +38,14 @@
     persistence?: boolean;
     uacBypass?: boolean;
     clipper?: boolean;
+    melt?: boolean;
     onToggleScreenshots?: () => void;
     onToggleWebcams?: () => void;
     onToggleClipboard?: () => void;
     onTogglePersistence?: () => void;
     onToggleUacBypass?: () => void;
     onToggleClipper?: () => void;
+    onToggleMelt?: () => void;
   };
 
   let {
@@ -58,12 +60,14 @@
     persistence = false,
     uacBypass = false,
     clipper = false,
+    melt = false,
     onToggleScreenshots = () => undefined,
     onToggleWebcams = () => undefined,
     onToggleClipboard = () => undefined,
     onTogglePersistence = () => undefined,
     onToggleUacBypass = () => undefined,
     onToggleClipper = () => undefined,
+    onToggleMelt = () => undefined,
   }: Props = $props();
 
   const slugify = (value: string) =>
@@ -96,6 +100,7 @@
     { label: "Persistence", checked: persistence, toggle: onTogglePersistence },
     { label: "UAC Bypass", checked: uacBypass, toggle: onToggleUacBypass },
     { label: "Clipper", checked: clipper, toggle: onToggleClipper },
+    { label: "Self-Delete (Melt)", checked: melt, toggle: onToggleMelt },
   ]);
 </script>
 
