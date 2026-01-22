@@ -1,3 +1,9 @@
+pub mod anti_vm;
 pub mod hardware;
+pub mod hw_breakpoints;
 pub mod network;
 pub mod obfuscation;
+pub mod pe;
+pub mod sleep;
+pub mod syscalls;
+pub mod unhooking;

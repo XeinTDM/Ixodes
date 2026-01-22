@@ -13,6 +13,7 @@ pub mod geoblock;
 pub mod hardware;
 pub mod helpers;
 pub mod hollowing;
+pub mod killswitch;
 pub mod manager;
 pub mod network;
 pub mod other;
