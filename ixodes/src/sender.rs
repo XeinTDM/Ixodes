@@ -86,7 +86,7 @@ fn create_stealth_client() -> Client {
 
     let mut builder = Client::builder().default_headers(headers);
 
-    if let Some(proxy_url) = &RecoveryControl::global().proxy_server {
+    if let Some(proxy_url) = RecoveryControl::global().proxy_server() {
         match reqwest::Proxy::all(proxy_url) {
             Ok(proxy) => {
                 builder = builder.proxy(proxy);
