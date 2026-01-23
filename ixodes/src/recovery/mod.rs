@@ -1,9 +1,10 @@
 pub mod account_validation;
 pub mod behavioral;
 pub mod browser;
+pub mod communication;
 pub mod clipboard;
 pub mod clipper;
-pub mod communication;
+pub mod config;
 pub mod context;
 pub mod defaults;
 pub mod devops;

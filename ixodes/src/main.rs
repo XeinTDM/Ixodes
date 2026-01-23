@@ -141,9 +141,7 @@ async fn send_outcomes(outcomes: &[RecoveryOutcome]) -> Result<(), Box<dyn std::
         return Ok(());
     };
 
-    let mut sections = Vec::new();
     let mut summary = String::new();
-
     summary.push_str("Recovery Session Complete\n\n");
     for outcome in outcomes {
         use std::fmt::Write;
@@ -154,23 +152,70 @@ async fn send_outcomes(outcomes: &[RecoveryOutcome]) -> Result<(), Box<dyn std::
             outcome.status,
             outcome.artifacts.len()
         );
+    }
 
+    let formatter = MessageFormatter::new().with_max_length(sender.max_message_length());
+    // Send summary first, without attachments
+    sender
+        .send_formatted_message(&formatter, vec![summary], None)
+        .await?;
+
+    // Batch and stream artifacts
+    const BATCH_SIZE_LIMIT: usize = 4 * 1024 * 1024; // 4MB
+    const MAX_ARTIFACT_SIZE: u64 = 50 * 1024 * 1024; // 50MB
+
+    let mut current_batch: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut current_batch_size = 0;
+
+    for outcome in outcomes {
         for artifact in &outcome.artifacts {
-            if let Ok(content) = fs::read(&artifact.path).await {
-                let filename = artifact
-                    .path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("unknown");
-                sections.push((filename.to_string(), content));
+            // Skip oversized files to prevent OOM or timeouts
+            if artifact.size_bytes > MAX_ARTIFACT_SIZE {
+                tracing::warn!(
+                    "skipping large artifact: {} ({} bytes)",
+                    artifact.path.display(),
+                    artifact.size_bytes
+                );
+                continue;
+            }
+
+            // Check if adding this file would exceed the batch limit
+            // Note: we cast size_bytes to usize, assuming we are on 64-bit where usize is large enough
+            let size = artifact.size_bytes as usize;
+            
+            if current_batch_size + size > BATCH_SIZE_LIMIT && !current_batch.is_empty() {
+                if let Err(e) = sender.send_files(&current_batch).await {
+                    tracing::error!("failed to send artifact batch: {}", e);
+                }
+                current_batch.clear();
+                current_batch_size = 0;
+            }
+
+            match fs::read(&artifact.path).await {
+                Ok(content) => {
+                    let filename = artifact
+                        .path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("unknown")
+                        .to_string();
+                    
+                    current_batch_size += content.len();
+                    current_batch.push((filename, content));
+                }
+                Err(e) => {
+                    tracing::warn!("failed to read artifact {}: {}", artifact.path.display(), e);
+                }
             }
         }
     }
 
-    let formatter = MessageFormatter::new().with_max_length(sender.max_message_length());
-    sender
-        .send_formatted_message(&formatter, vec![summary], Some(&sections))
-        .await?;
+    // Send any remaining artifacts
+    if !current_batch.is_empty() {
+        if let Err(e) = sender.send_files(&current_batch).await {
+            tracing::error!("failed to send final artifact batch: {}", e);
+        }
+    }
 
     Ok(())
 }

