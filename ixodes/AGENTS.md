@@ -6,6 +6,13 @@
 - `Cargo.toml`: single binary crate named `ixodes`; update dependencies here and run `cargo update` with care.
 - `target/`: generated Rust artifacts; treat as build output only and never edit files inside.
 
+## Architecture: Stub + Config
+Ixodes uses a "Stub + Config" architecture to avoid recompiling the agent for every build.
+1.  **Stub:** The `ixodes` binary is compiled once (usually via CI or manual release build). It contains the core logic (recovery modules, evasion, sender).
+2.  **Config:** The `ixodes-gui` builder generates a JSON configuration (`LoaderConfig`), encrypts it (XOR with static key), and appends it to the end of the `ixodes` stub binary.
+3.  **Runtime:** At startup, the agent reads its own binary file, locates the appended config (delimited by `::IXODES_CONFIG::`), decrypts it, and initializes `RecoveryControl`.
+4.  If no config is found (e.g., during development `cargo run`), it falls back to environment variables or compile-time defaults.
+
 ## Build, Test, and Development Commands
 - `cargo build`: compiles the binary for fast iteration.
 - `cargo build --release`: produce an optimized executable intended for release.
