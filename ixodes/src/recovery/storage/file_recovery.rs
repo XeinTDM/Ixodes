@@ -115,18 +115,22 @@ impl RecoveryTask for FileRecoveryTask {
             .map(|ext| ext.to_ascii_lowercase())
             .collect();
 
-        for ext in control.custom_extensions() {
-            let normalized = if ext.starts_with('.') {
-                ext.to_ascii_lowercase()
-            } else {
-                format!(".{}", ext.to_ascii_lowercase())
-            };
-            allowed_extensions.insert(normalized);
+        if let Some(extensions) = control.custom_extensions() {
+            for ext in extensions {
+                let normalized = if ext.starts_with('.') {
+                    ext.to_ascii_lowercase()
+                } else {
+                    format!(".{}", ext.to_ascii_lowercase())
+                };
+                allowed_extensions.insert(normalized);
+            }
         }
 
         let mut keywords: Vec<String> = KEYWORDS.iter().map(|kw| kw.to_ascii_lowercase()).collect();
-        for kw in control.custom_keywords() {
-            keywords.push(kw.to_ascii_lowercase());
+        if let Some(custom_kws) = control.custom_keywords() {
+            for kw in custom_kws {
+                keywords.push(kw.to_ascii_lowercase());
+            }
         }
 
         let artifacts = task::spawn_blocking(move || {

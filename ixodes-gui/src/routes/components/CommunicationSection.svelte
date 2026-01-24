@@ -2,6 +2,7 @@
   import { Input } from "$lib/components/ui/input";
   import { Label } from "$lib/components/ui/label";
   import { Switch } from "$lib/components/ui/switch";
+  import { isDiscordWebhookValid, isTelegramChatIdValid, isTelegramTokenValid } from "$lib/validation/communication";
   import { FolderOpen } from "@lucide/svelte";
 
   type CommChannel = "telegram" | "discord";
@@ -42,14 +43,15 @@
   let hoveredPreview = $state<CommChannel | null>(null);
   let activePreview = $state<CommChannel | null>(null);
 
-  const telegramTokenValid = () =>
-    telegramToken.trim().length === 0 ? true : /^\d+:[A-Za-z0-9_-]{20,}$/.test(telegramToken.trim());
-  const telegramChatIdValid = () =>
-    telegramChatId.trim().length === 0 ? true : /^-?\d+$/.test(telegramChatId.trim());
-  const discordWebhookValid = () =>
-    discordWebhook.trim().length === 0
-      ? true
-      : /^https:\/\/(canary\.|ptb\.)?discord\.com\/api\/webhooks\/\d+\/[A-Za-z0-9_-]+$/.test(discordWebhook.trim());
+  const telegramTokenValid = () => isTelegramTokenValid(telegramToken);
+  const telegramChatIdValid = () => isTelegramChatIdValid(telegramChatId);
+  const discordWebhookValid = () => isDiscordWebhookValid(discordWebhook);
+  const telegramTokenHasError = () =>
+    commMode === "telegram" && telegramToken.trim().length > 0 && !telegramTokenValid();
+  const telegramChatIdHasError = () =>
+    commMode === "telegram" && telegramChatId.trim().length > 0 && !telegramChatIdValid();
+  const discordWebhookHasError = () =>
+    commMode === "discord" && discordWebhook.trim().length > 0 && !discordWebhookValid();
 
   const handlePreviewHover = (mode: CommChannel | null) => {
     hoveredPreview = mode;
@@ -114,14 +116,21 @@
           value={telegramToken}
           oninput={(event) => onTelegramTokenChange((event.target as HTMLInputElement).value)}
           disabled={commMode !== "telegram"}
-          class={`${commMode !== "telegram" ? "pointer-events-none" : ""} ${!telegramTokenValid() && commMode === "telegram" ? "border-destructive focus-visible:ring-destructive/30"
-            : ""
-            }`}
+          aria-invalid={telegramTokenHasError()}
+          aria-describedby={telegramTokenHasError() ? "telegram-token-error" : undefined}
+          class={`${
+            commMode !== "telegram" ? "pointer-events-none" : ""
+          } ${telegramTokenHasError() ? "border-destructive focus-visible:ring-destructive/30" : ""}`}
         />
         {#if commMode === "telegram"}
           <p class="text-xs text-muted-foreground">
             Format: bot token like <span class="font-mono">123456789:ABCDEF...</span>
           </p>
+          {#if telegramTokenHasError()}
+            <p class="text-xs text-destructive" id="telegram-token-error">
+              Telegram tokens must match <span class="font-mono">123456789:ABCDEF...</span>.
+            </p>
+          {/if}
         {/if}
       </div>
       <div class="space-y-2">
@@ -134,15 +143,22 @@
           value={telegramChatId}
           oninput={(event) => onTelegramChatIdChange((event.target as HTMLInputElement).value)}
           disabled={commMode !== "telegram"}
-          class={`${commMode !== "telegram" ? "pointer-events-none" : ""} ${!telegramChatIdValid() && commMode === "telegram" ? "border-destructive focus-visible:ring-destructive/30"
-            : ""
-            }`}
+          aria-invalid={telegramChatIdHasError()}
+          aria-describedby={telegramChatIdHasError() ? "telegram-chat-error" : undefined}
+          class={`${
+            commMode !== "telegram" ? "pointer-events-none" : ""
+          } ${telegramChatIdHasError() ? "border-destructive focus-visible:ring-destructive/30" : ""}`}
         />
         {#if commMode === "telegram"}
           <p class="text-xs text-muted-foreground">
             Numeric chat ID (e.g. <span class="font-mono">123456789</span> or{" "}
             <span class="font-mono">-1001234567890</span>).
           </p>
+          {#if telegramChatIdHasError()}
+            <p class="text-xs text-destructive" id="telegram-chat-error">
+              Chat IDs only include digits (and an optional leading "-").
+            </p>
+          {/if}
         {/if}
       </div>
       <div class="flex items-center justify-between gap-2 text-xs text-muted-foreground">
@@ -226,13 +242,21 @@
           value={discordWebhook}
           oninput={(event) => onDiscordWebhookChange((event.target as HTMLInputElement).value)}
           disabled={commMode !== "discord"}
-          class={`${commMode !== "discord" ? "pointer-events-none" : ""} ${!discordWebhookValid() && commMode === "discord" ? "border-destructive focus-visible:ring-destructive/30" : ""
-            }`}
+          aria-invalid={discordWebhookHasError()}
+          aria-describedby={discordWebhookHasError() ? "discord-webhook-error" : undefined}
+          class={`${
+            commMode !== "discord" ? "pointer-events-none" : ""
+          } ${discordWebhookHasError() ? "border-destructive focus-visible:ring-destructive/30" : ""}`}
         />
         {#if commMode === "discord"}
           <p class="text-xs text-muted-foreground">
             Full webhook URL like <span class="font-mono">https://discord.com/api/webhooks/…</span>
           </p>
+          {#if discordWebhookHasError()}
+            <p class="text-xs text-destructive" id="discord-webhook-error">
+              Webhooks must follow <span class="font-mono">https://discord.com/api/webhooks/&lt;id&gt;/&lt;token&gt;</span>.
+            </p>
+          {/if}
         {/if}
       </div>
       <div class="flex items-center justify-between gap-2 text-xs text-muted-foreground">
@@ -280,10 +304,10 @@
   {#if activePreview}
     <div
       class="fixed inset-0 z-50 grid place-items-center bg-black/70 p-4"
-      role="button"
-      tabindex="0"
+      role="presentation"
+      tabindex="-1"
       onkeydown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
+        if (event.key === "Escape" || event.key === "Enter" || event.key === " ") {
           event.preventDefault();
           closePreviewLightbox();
         }

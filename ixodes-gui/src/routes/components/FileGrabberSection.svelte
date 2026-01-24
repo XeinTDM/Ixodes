@@ -25,17 +25,29 @@
   let extInput = $state("");
   let kwInput = $state("");
 
+  const normalizeExtension = (value: string): string | null => {
+    const trimmed = value.trim().toLowerCase();
+    if (trimmed === "") return null;
+    return trimmed.startsWith(".") ? trimmed : `.${trimmed}`;
+  };
+
+  const normalizeKeyword = (value: string): string | null => {
+    const trimmed = value.trim();
+    if (trimmed === "") return null;
+    return trimmed;
+  };
+
   const handleAddExtension = () => {
-    const trimmed = extInput.trim();
-    if (!trimmed) return;
-    onAddExtension(trimmed);
+    const normalized = normalizeExtension(extInput);
+    if (!normalized) return;
+    onAddExtension(normalized);
     extInput = "";
   };
 
   const handleAddKeyword = () => {
-    const trimmed = kwInput.trim();
-    if (!trimmed) return;
-    onAddKeyword(trimmed);
+    const normalized = normalizeKeyword(kwInput);
+    if (!normalized) return;
+    onAddKeyword(normalized);
     kwInput = "";
   };
 </script>

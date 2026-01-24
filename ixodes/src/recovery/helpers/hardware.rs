@@ -1,5 +1,5 @@
 use crate::recovery::task::RecoveryError;
-use reqwest::Client;
+use crate::recovery::helpers::winhttp::Client;
 use serde_json::Value;
 use tokio::process::Command;
 use tracing::warn;

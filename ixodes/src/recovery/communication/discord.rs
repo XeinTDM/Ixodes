@@ -11,8 +11,7 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use once_cell::sync::Lazy;
 use regex::Regex;
-use reqwest::header::AUTHORIZATION;
-use reqwest::{Client, StatusCode};
+use crate::recovery::helpers::winhttp::{Client, StatusCode};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -660,7 +659,7 @@ impl DiscordApiClient {
         let response = self
             .client
             .get(&url)
-            .header(AUTHORIZATION, token)
+            .header("Authorization", token)
             .send()
             .await
             .map_err(|err| format!("{endpoint} request failed: {err}"))?;

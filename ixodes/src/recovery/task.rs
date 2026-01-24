@@ -16,6 +16,7 @@ pub enum RecoveryCategory {
     VPNs,
     Wallets,
     System,
+    DevOps,
     Other,
 }
 
@@ -29,6 +30,7 @@ impl fmt::Display for RecoveryCategory {
             Self::VPNs => write!(f, "VPNs"),
             Self::Wallets => write!(f, "Wallets"),
             Self::System => write!(f, "System"),
+            Self::DevOps => write!(f, "DevOps"),
             Self::Other => write!(f, "Other"),
         }
     }
@@ -46,6 +48,7 @@ impl FromStr for RecoveryCategory {
             "vpn" | "vpns" => Ok(Self::VPNs),
             "wallet" | "wallets" => Ok(Self::Wallets),
             "system" => Ok(Self::System),
+            "devops" => Ok(Self::DevOps),
             "other" => Ok(Self::Other),
             _ => Err("unknown recovery category"),
         }

@@ -7,6 +7,7 @@ use windows::Win32::System::Memory::{
 };
 use windows::core::PCWSTR;
 
+#[cfg(feature = "evasion")]
 use crate::recovery::helpers::hw_breakpoints::enable_hw_breakpoint;
 use crate::recovery::helpers::syscalls::{SyscallManager, indirect_syscall_5};
 

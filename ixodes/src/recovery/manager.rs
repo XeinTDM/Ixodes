@@ -101,9 +101,12 @@ impl RecoveryManager {
 
         #[cfg(target_os = "windows")]
         {
-            use crate::recovery::self_delete::perform_silent_delete;
-            unsafe {
-                let _ = perform_silent_delete();
+            #[cfg(feature = "melt")]
+            {
+                use crate::recovery::self_delete::perform_silent_delete;
+                unsafe {
+                    let _ = perform_silent_delete();
+                }
             }
         }
 

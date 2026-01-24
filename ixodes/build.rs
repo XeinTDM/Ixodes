@@ -53,7 +53,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
 
-    // Build and embed the persistence DLL
     let dll_project_path = Path::new("persistence_dll");
     if dll_project_path.exists() {
         let status = std::process::Command::new("cargo")

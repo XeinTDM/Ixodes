@@ -32,6 +32,7 @@ pub async fn write_text_artifact(
     write_artifact_bytes(ctx, category, label, file_name, text.as_bytes()).await
 }
 
+#[cfg(any(feature = "screenshot", feature = "webcam"))]
 pub async fn write_binary_artifact(
     ctx: &RecoveryContext,
     category: RecoveryCategory,

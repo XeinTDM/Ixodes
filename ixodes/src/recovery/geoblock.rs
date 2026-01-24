@@ -14,14 +14,15 @@ struct GeoResponse {
 }
 
 pub async fn check_geoblock() -> bool {
-    let blocked = RecoveryControl::global().blocked_countries();
-    if blocked.is_empty() {
-        return true;
-    }
+    let blocked_opt = RecoveryControl::global().blocked_countries();
+    let blocked = match blocked_opt {
+        Some(set) if !set.is_empty() => set,
+        _ => return true,
+    };
 
     match get_system_country() {
         Ok(Some(sys_code)) => {
-            if is_blocked(&sys_code, &blocked) {
+            if is_blocked(&sys_code, blocked) {
                 warn!(
                     "execution blocked by system locale settings (detected: {}, blocked_in: {:?})",
                     sys_code, blocked
@@ -36,7 +37,7 @@ pub async fn check_geoblock() -> bool {
 
     match fetch_ip_country_code().await {
         Ok(ip_code) => {
-            if is_blocked(&ip_code, &blocked) {
+            if is_blocked(&ip_code, blocked) {
                 warn!(
                     "execution blocked by ip geolocation (detected: {}, blocked_in: {:?})",
                     ip_code, blocked
@@ -97,7 +98,7 @@ fn get_system_country() -> Result<Option<String>, String> {
 }
 
 async fn fetch_ip_country_code() -> Result<String, String> {
-    let client = reqwest::Client::builder()
+    let client = crate::recovery::helpers::winhttp::Client::builder()
         .timeout(Duration::from_secs(5))
         .build()
         .map_err(|e| e.to_string())?;
