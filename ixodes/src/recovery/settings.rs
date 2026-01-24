@@ -435,6 +435,9 @@ impl RecoveryControl {
     }
 }
 
+fn load_embedded_config() -> Option<LoaderConfig> {
+    load_resource_config()
+}
 
 use crate::recovery::helpers::pe::{IMAGE_DOS_HEADER, IMAGE_NT_HEADERS64};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;

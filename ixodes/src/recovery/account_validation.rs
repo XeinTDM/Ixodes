@@ -6,7 +6,6 @@ use crate::recovery::{
     fs::sanitize_label,
     task::{RecoveryArtifact, RecoveryCategory, RecoveryError, RecoveryTask},
 };
-use crate::recovery::task::{RecoveryArtifact, RecoveryCategory, RecoveryError, RecoveryTask};
 use async_trait::async_trait;
 use once_cell::sync::Lazy;
 use crate::recovery::helpers::winhttp::{Client, Response, Error};

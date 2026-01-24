@@ -1,15 +1,14 @@
 use std::ffi::c_void;
-use std::ptr::{null, null_mut};
+use std::ptr::null_mut;
 use std::time::Duration;
 use serde::{Serialize, de::DeserializeOwned};
-use windows::core::{PCWSTR, HSTRING};
-use windows::Win32::Foundation::{GetLastError, NO_ERROR, ERROR_INSUFFICIENT_BUFFER};
+use windows::core::{PCWSTR, HSTRING, Error as WinError};
 use windows::Win32::Networking::WinHttp::*;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("WinHttp error: {0}")]
-    WinHttp(u32),
+    WinHttp(#[from] WinError),
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
     #[error("JSON error: {0}")]
@@ -37,11 +36,11 @@ impl Client {
         ClientBuilder::default()
     }
 
-    pub fn post(&self, url: &str) -> RequestBuilder {
+    pub fn post(&self, url: impl Into<String>) -> RequestBuilder {
         RequestBuilder::new(self.clone(), Method::Post, url)
     }
 
-    pub fn get(&self, url: &str) -> RequestBuilder {
+    pub fn get(&self, url: impl Into<String>) -> RequestBuilder {
         RequestBuilder::new(self.clone(), Method::Get, url)
     }
 }
@@ -58,8 +57,8 @@ impl ClientBuilder {
         self
     }
 
-    pub fn user_agent(mut self, ua: String) -> Self {
-        self.user_agent = Some(ua);
+    pub fn user_agent(mut self, ua: impl Into<String>) -> Self {
+        self.user_agent = Some(ua.into());
         self
     }
 
@@ -134,11 +133,11 @@ pub struct RequestBuilder {
 }
 
 impl RequestBuilder {
-    pub fn new(client: Client, method: Method, url: &str) -> Self {
+    pub fn new(client: Client, method: Method, url: impl Into<String>) -> Self {
         Self {
             client,
             method,
-            url: url.to_string(),
+            url: url.into(),
             headers: std::collections::HashMap::new(),
             body: Vec::new(),
         }
@@ -239,8 +238,8 @@ impl Form {
 
     pub fn text(mut self, key: &str, value: String) -> Self {
         let part = format!(
-            "--{{}}\r\nContent-Disposition: form-data; name=\"{}\"\r\n\r\n{{}}\r\n",
-            self.boundary, key, value
+            "--{}\r\nContent-Disposition: form-data; name=\"{}\"\r\n\r\n{}\r\n",
+            self.boundary, key, value,
         );
         self.body.extend_from_slice(part.as_bytes());
         self
@@ -248,26 +247,14 @@ impl Form {
 
     pub fn part(mut self, key: &str, part: Part) -> Self {
         let head = format!(
-            "--{{}}\r\nContent-Disposition: form-data; name=\"{}\"; filename=\"{{}}\"\r\nContent-Type: application/octet-stream\r\n\r\n",
-            self.boundary, key, part.file_name
+            "--{}\r\nContent-Disposition: form-data; name=\"{}\"; filename=\"{}\"\r\nContent-Type: application/octet-stream\r\n\r\n",
+            self.boundary, key, part.file_name,
         );
         self.body.extend_from_slice(head.as_bytes());
         self.body.extend_from_slice(&part.bytes);
         self.body.extend_from_slice(b"\r\n");
         self
     }
-    
-    // Finalize needed? We'll just append the closing boundary when sending or here?
-    // reqwest likely does it at the end. We should ensure the body is valid.
-    // My multipart implementation in RequestBuilder uses raw body.
-    // I need to make sure the closing boundary is added.
-    // The safest way is to add it in RequestBuilder or ensure `Form` adds it.
-    // But `Form` is builder-like.
-    // Let's make `part` and `text` not consume self but return self, and have a `finish` logic?
-    // Or just append "--boundary--" when converting to bytes?
-    // But `RequestBuilder` takes `Form` and extracts `body`.
-    // I'll add a helper `finish()` to Form or just append it in `multipart()`.
-    // Wait, `multipart()` takes `Form`. I can append the closing boundary inside `multipart()`.
 }
 
 pub struct Part {
@@ -295,15 +282,14 @@ fn send_request_sync(
     method: Method,
     url_str: String,
     headers: std::collections::HashMap<String, String>,
-    mut body: Vec<u8>,
+    body: Vec<u8>,
 ) -> Result<Response, Error> {
+    fn winhttp_error() -> Error {
+        WinError::from_win32().into()
+    }
+
     unsafe {
-        // Parse URL
-        // WinHttp requires hostname and path separately.
-        // Simple parsing:
         let url_parts = url_str.splitn(4, '/').collect::<Vec<&str>>(); 
-        // http://host/path -> ["http:", "", "host", "path"]
-        // https://host/path -> ["https:", "", "host", "path"]
         
         if url_parts.len() < 3 {
             return Err(Error::UrlParse);
@@ -317,7 +303,6 @@ fn send_request_sync(
             "/".to_string()
         };
 
-        // Handle Port
         let (host, port) = if let Some(idx) = host_port.find(':') {
             (&host_port[..idx], host_port[idx+1..].parse::<u16>().unwrap_or(if scheme == "https:" { 443 } else { 80 }))
         } else {
@@ -337,8 +322,8 @@ fn send_request_sync(
             0,
         );
 
-        if h_session.is_invalid() {
-            return Err(Error::WinHttp(GetLastError().0));
+        if h_session.is_null() {
+            return Err(winhttp_error());
         }
 
         let h_connect = WinHttpConnect(
@@ -348,9 +333,9 @@ fn send_request_sync(
             0,
         );
 
-        if h_connect.is_invalid() {
-            WinHttpCloseHandle(h_session);
-            return Err(Error::WinHttp(GetLastError().0));
+        if h_connect.is_null() {
+            let _ = WinHttpCloseHandle(h_session);
+            return Err(winhttp_error());
         }
 
         let method_str = match method {
@@ -358,7 +343,7 @@ fn send_request_sync(
             Method::Post => "POST",
         };
 
-        let flags = if scheme == "https:" { WINHTTP_FLAG_SECURE } else { 0 };
+        let flags = if scheme == "https:" { WINHTTP_FLAG_SECURE } else { WINHTTP_OPEN_REQUEST_FLAGS(0) };
 
         let h_request = WinHttpOpenRequest(
             h_connect,
@@ -366,66 +351,64 @@ fn send_request_sync(
             PCWSTR::from_raw(HSTRING::from(path).as_ptr()),
             PCWSTR::null(),
             PCWSTR::null(),
-            PCWSTR::null(),
+            std::ptr::null(),
             flags,
         );
 
-        if h_request.is_invalid() {
-            WinHttpCloseHandle(h_connect);
-            WinHttpCloseHandle(h_session);
-            return Err(Error::WinHttp(GetLastError().0));
+        if h_request.is_null() {
+            let _ = WinHttpCloseHandle(h_connect);
+            let _ = WinHttpCloseHandle(h_session);
+            return Err(winhttp_error());
         }
 
         // Add Headers
         for (k, v) in headers {
             let header_str = format!("{}: {}", k, v);
             let h_header = HSTRING::from(header_str);
-            if WinHttpAddRequestHeaders(
+            let _ = WinHttpAddRequestHeaders(
                 h_request,
-                PCWSTR::from_raw(h_header.as_ptr()),
-                h_header.len() as u32,
+                h_header.as_wide(),
                 WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE,
-            ).as_bool() == false {
-                 // Ignore header errors?
-            }
+            );
         }
 
         // Send Request
-        let mut total_bytes = body.len() as u32;
-        let p_data = if total_bytes > 0 { body.as_mut_ptr() as *mut c_void } else { null_mut() };
-        
-        if WinHttpSendRequest(
+        let total_bytes = body.len() as u32;
+        let p_data = if total_bytes > 0 {
+            Some(body.as_ptr() as *const c_void)
+        } else {
+            None
+        };
+
+        if let Err(err) = WinHttpSendRequest(
             h_request,
-            PCWSTR::null(),
-            0,
+            None,
             p_data,
             total_bytes,
             total_bytes,
             0,
-        ).as_bool() == false {
-            let err = GetLastError().0;
-            WinHttpCloseHandle(h_request);
-            WinHttpCloseHandle(h_connect);
-            WinHttpCloseHandle(h_session);
+        ) {
+            let _ = WinHttpCloseHandle(h_request);
+            let _ = WinHttpCloseHandle(h_connect);
+            let _ = WinHttpCloseHandle(h_session);
             return Err(Error::WinHttp(err));
         }
 
-        if WinHttpReceiveResponse(h_request, null_mut()).as_bool() == false {
-            let err = GetLastError().0;
-            WinHttpCloseHandle(h_request);
-            WinHttpCloseHandle(h_connect);
-            WinHttpCloseHandle(h_session);
+        if let Err(err) = WinHttpReceiveResponse(h_request, null_mut()) {
+            let _ = WinHttpCloseHandle(h_request);
+            let _ = WinHttpCloseHandle(h_connect);
+            let _ = WinHttpCloseHandle(h_session);
             return Err(Error::WinHttp(err));
         }
 
         // Get Status Code
         let mut status_code: u32 = 0;
         let mut size = std::mem::size_of::<u32>() as u32;
-        WinHttpQueryHeaders(
+        let _ = WinHttpQueryHeaders(
             h_request,
             WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
             PCWSTR::null(),
-            &mut status_code as *mut _ as *mut c_void,
+            Some(&mut status_code as *mut _ as *mut c_void),
             &mut size,
             null_mut(),
         );
@@ -434,7 +417,7 @@ fn send_request_sync(
         let mut response_body = Vec::new();
         loop {
             let mut dw_size: u32 = 0;
-            if WinHttpQueryDataAvailable(h_request, &mut dw_size).as_bool() == false {
+            if WinHttpQueryDataAvailable(h_request, &mut dw_size).is_err() {
                 break;
             }
             if dw_size == 0 {
@@ -448,7 +431,7 @@ fn send_request_sync(
                 buffer.as_mut_ptr() as *mut c_void,
                 dw_size,
                 &mut downloaded,
-            ).as_bool() == true {
+            ).is_ok() {
                 buffer.truncate(downloaded as usize);
                 response_body.extend(buffer);
             } else {
@@ -456,9 +439,9 @@ fn send_request_sync(
             }
         }
 
-        WinHttpCloseHandle(h_request);
-        WinHttpCloseHandle(h_connect);
-        WinHttpCloseHandle(h_session);
+        let _ = WinHttpCloseHandle(h_request);
+        let _ = WinHttpCloseHandle(h_connect);
+        let _ = WinHttpCloseHandle(h_session);
 
         Ok(Response {
             status: status_code,
